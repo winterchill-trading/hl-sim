@@ -1,0 +1,9 @@
+; The main module is [main] rather than [hl_sim] so that it does not clash with the
+; [hl_sim] library's wrapper module.
+
+(executable
+ (name main)
+ (public_name hl-sim)
+ (libraries async core core_unix.command_unix hl-protocol hl-sim)
+ (preprocess
+  (pps ppx_jane)))
