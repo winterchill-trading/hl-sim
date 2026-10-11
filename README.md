@@ -8,8 +8,94 @@ Requests and responses use the wire types from
 [order-book](https://github.com/winterchill-trading/order-book), and fixed-point
 arithmetic comes from [fixed-decimal](https://github.com/winterchill-trading/fixed-decimal).
 
-This package holds the pure matching and accounting engine. It does no I/O; an
-HTTP/websocket front end will drive it.
+The package has a pure matching and accounting engine (`Exchange`), an HTTP and
+websocket server speaking Hyperliquid's public API (`Server`), a synthetic order flow
+generator (`Market_sim`) and the `hl-sim` executable that runs them together.
+
+## Running
+
+```sh
+dune exec hl-sim -- -port 3000
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `-port` | 3000 | HTTP and websocket port |
+| `-seed` | 0 | market simulation random seed |
+| `-vol-bps` | 5 | reference price volatility per second, in basis points |
+| `-coins` | all | comma-separated coins the noise traders trade |
+| `-noise-traders` | 10 | noise trader accounts; 0 disables the market simulation |
+| `-initial-balance` | 1000000 | USD credited to any address on first use |
+| `-log-level` | info | `debug`, `info`, `warn` or `error` |
+
+Logs go to stderr: fills and liquidations at `info`, every event, request detail and
+websocket (un)subscription at `debug`.
+
+The universe is BTC, ETH and SOL (asset indices 0, 1, 2; see `{"type": "meta"}`).
+
+### Addresses and balances
+
+Signatures are not verified. The acting address of a `POST /exchange` request is, in
+order:
+
+1. the `X-Address` header,
+2. the request's `vaultAddress`,
+3. `0x0000000000000000000000000000000000000001`.
+
+Every address the server sees (acting address, info `user`, websocket `user`) is
+credited `-initial-balance` USD the first time, so a client can trade without a deposit
+flow.
+
+### Info
+
+```sh
+curl -s localhost:3000/info -d '{"type": "l2Book", "coin": "BTC"}'
+curl -s localhost:3000/info -d '{"type": "allMids"}'
+curl -s localhost:3000/info -d '{"type": "meta"}'
+curl -s localhost:3000/info -d '{"type": "clearinghouseState", "user": "0x00000000000000000000000000000000000000aa"}'
+curl -s localhost:3000/info -d '{"type": "openOrders", "user": "0x00000000000000000000000000000000000000aa"}'
+curl -s localhost:3000/info -d '{"type": "userFills", "user": "0x00000000000000000000000000000000000000aa"}'
+```
+
+`nSigFigs` and `mantissa` are accepted but ignored. An unknown coin returns `null`.
+
+### Exchange
+
+```sh
+# Rest a bid for 0.001 BTC at 99000
+curl -s localhost:3000/exchange -H 'X-Address: 0x00000000000000000000000000000000000000aa' -d '{
+  "action": {"type": "order", "grouping": "na",
+             "orders": [{"a": 0, "b": true, "p": "99000", "s": "0.001", "r": false,
+                         "t": {"limit": {"tif": "Gtc"}}}]},
+  "nonce": 1}'
+
+# Cancel it
+curl -s localhost:3000/exchange -H 'X-Address: 0x00000000000000000000000000000000000000aa' -d '{
+  "action": {"type": "cancel", "cancels": [{"a": 0, "o": 1}]}, "nonce": 2}'
+```
+
+Supported actions: `order`, `cancel`, `cancelByCloid`, `modify`. Malformed bodies get
+status 400 and `{"error": "..."}`.
+
+### Websocket
+
+The websocket is served on the same port at `/ws`:
+
+```sh
+websocat ws://localhost:3000/ws
+{"method": "subscribe", "subscription": {"type": "l2Book", "coin": "BTC"}}
+{"method": "subscribe", "subscription": {"type": "trades", "coin": "BTC"}}
+{"method": "subscribe", "subscription": {"type": "orderUpdates", "user": "0x00000000000000000000000000000000000000aa"}}
+{"method": "subscribe", "subscription": {"type": "userFills", "user": "0x00000000000000000000000000000000000000aa"}}
+{"method": "subscribe", "subscription": {"type": "allMids"}}
+{"method": "ping"}
+```
+
+Every (un)subscribe is answered with a `subscriptionResponse` echo and `ping` with
+`{"channel": "pong"}`. `l2Book` subscriptions get a snapshot immediately, then a new
+snapshot after changes to that book, at most every 50ms. `userFills` starts with an
+`isSnapshot: true` message; `allMids` starts with a snapshot and repeats every second.
+`trades`, `orderUpdates` and `userFills` are pushed as events happen.
 
 ## Build
 
@@ -39,6 +125,8 @@ All modules live under `Hl_sim`. The order book (`Order_book`, with fills as
 | `Clearinghouse` | All accounts: fill settlement, fees, initial and maintenance margin, liquidation, funding, `clearinghouseState` |
 | `Event` | Log entries: order accepted/rejected/filled/cancelled, fill, liquidation, funding |
 | `Exchange` | Top level: books per coin, clearinghouse, marks, id counters, clock, event log; exchange and info endpoints |
+| `Server` | cohttp-async server for `/info`, `/exchange` and the `/ws` websocket (async_websocket); owns the `Exchange` |
+| `Market_sim` | Seeded random-walk reference prices, marks, and noise traders posting, cancelling and taking |
 
 ## Design notes
 
@@ -78,8 +166,22 @@ All modules live under `Hl_sim`. The order book (`Order_book`, with fills as
   rates a private `Rate` type; products and quotients never overflow an intermediate
   and truncate toward zero.
 
+- **Server.** All exchange access happens on the Async scheduler thread, so there is no
+  locking. Before each request the exchange clock is stepped to the wall clock (funding
+  and liquidation run then and on a 1s timer); events produced by a request are
+  published to websocket subscribers right after it. The websocket upgrade uses
+  cohttp-async's `` `Expert `` response, which hands the raw reader and writer to
+  async_websocket after writing the `101` response.
+- **Market simulation.** Each coin's reference price is a geometric random walk with
+  `-vol-bps` volatility per second, stepped every 100ms; the mark follows it. Noise
+  traders (addresses `0xffff...ff0000000N`, $10M each) post GTC orders up to 25 bps from
+  the reference, cancel old ones and occasionally send market orders. Runs are
+  reproducible for a seed, given the same sequence of external requests.
+
 ## Tests
 
-`dune test` runs expect tests (fees, PnL, liquidation, funding, exchange flows) and
-`Base_quickcheck` properties: balances plus unrealised PnL plus fees are conserved.
+`dune test` runs expect tests (fees, PnL, liquidation, funding, exchange flows, a
+seeded market simulation, and the HTTP and websocket server on a free port with a fixed
+clock) and `Base_quickcheck` properties: balances plus unrealised PnL plus fees are
+conserved.
 Order book tests live in `order-book`.

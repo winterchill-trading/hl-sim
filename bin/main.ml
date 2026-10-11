@@ -41,7 +41,7 @@ let command =
        flag
          "-log-level"
          (optional_with_default `Info Log.Level.arg)
-         ~doc:"LEVEL debug, info or error (default info)"
+         ~doc:"LEVEL debug, info, warn or error (default info)"
      in
      fun () ->
        Log.Global.set_output [ Log.Output.stderr () ];
