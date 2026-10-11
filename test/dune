@@ -1,0 +1,8 @@
+(library
+ (name hl_sim_test)
+ (inline_tests
+  (flags
+   (:standard -source-tree-root .)))
+ (libraries core hl_protocol hl_sim)
+ (preprocess
+  (pps ppx_jane)))
