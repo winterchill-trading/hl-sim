@@ -1,6 +1,19 @@
 (library
  (name hl_sim)
  (public_name hl-sim)
- (libraries core fixed-decimal hl-protocol order-book)
+ (libraries
+  async
+  async_websocket
+  cohttp
+  cohttp-async
+  core
+  core_unix
+  fixed-decimal
+  http
+  hl-protocol
+  order-book
+  ppx_yojson_conv_lib
+  uri
+  yojson)
  (preprocess
   (pps ppx_jane)))

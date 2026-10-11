@@ -3,6 +3,16 @@
  (inline_tests
   (flags
    (:standard -source-tree-root .)))
- (libraries core hl-protocol hl-sim order-book)
+ (libraries
+  async
+  async_websocket
+  cohttp
+  cohttp-async
+  core
+  hl-protocol
+  hl-sim
+  order-book
+  uri
+  yojson)
  (preprocess
   (pps ppx_jane)))

@@ -8,6 +8,12 @@ depends: [
   "ocaml"
   "dune" {>= "3.17"}
   "core"
+  "core_unix"
+  "async"
+  "cohttp-async"
+  "async_websocket"
+  "uri"
+  "yojson"
   "fixed-decimal"
   "hl-protocol"
   "order-book"

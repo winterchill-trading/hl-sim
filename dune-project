@@ -12,4 +12,17 @@
 (package
  (name hl-sim)
  (synopsis "Hyperliquid exchange simulator")
- (depends ocaml dune core fixed-decimal hl-protocol order-book ppx_jane))
+ (depends
+  ocaml
+  dune
+  core
+  core_unix
+  async
+  cohttp-async
+  async_websocket
+  uri
+  yojson
+  fixed-decimal
+  hl-protocol
+  order-book
+  ppx_jane))
