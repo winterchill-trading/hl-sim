@@ -69,7 +69,7 @@ curl -s localhost:3000/exchange -H 'X-Address: 0x0000000000000000000000000000000
                          "t": {"limit": {"tif": "Gtc"}}}]},
   "nonce": 1}'
 
-# Cancel it
+# Cancel it, with the oid from the "resting" status of the response above
 curl -s localhost:3000/exchange -H 'X-Address: 0x00000000000000000000000000000000000000aa' -d '{
   "action": {"type": "cancel", "cancels": [{"a": 0, "o": 1}]}, "nonce": 2}'
 ```
