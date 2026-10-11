@@ -1,0 +1,29 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        id: opam-cache
+        with:
+          path: ~/.opam
+          key: oxcaml-5.2.0+ox-${{ runner.os }}-${{ hashFiles('**/*.opam') }}
+          restore-keys: oxcaml-5.2.0+ox-${{ runner.os }}-
+      - name: Install opam
+        run: |
+          sudo apt-get update && sudo apt-get install -y opam
+          if [ ! -d ~/.opam ]; then opam init -a --bare; fi
+      - name: Create OxCaml switch
+        run: |
+          if ! opam switch list --short | grep -q '^5.2.0+ox$'; then
+            opam repo add --dont-select ox git+https://github.com/oxcaml/opam-repository.git || true
+            opam switch create 5.2.0+ox --repos ox,default -y
+          fi
+      - name: Install deps
+        run: opam exec --switch 5.2.0+ox -- opam install . --deps-only --with-test -y
+      - name: Build and test
+        run: |
+          opam exec --switch 5.2.0+ox -- dune build
+          opam exec --switch 5.2.0+ox -- dune test
