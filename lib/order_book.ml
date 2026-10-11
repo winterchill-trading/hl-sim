@@ -155,7 +155,11 @@ type swept =
 
 (* Matches [remaining] against the opposite side until filled, out of crossing liquidity,
    or blocked by an own order. Returns the unfilled size, the fills in reverse execution
-   order and why matching stopped. *)
+   order and why matching stopped.
+
+   OxCaml: the recursive call is [exclave_ sweep ...], which ends this frame's region
+   before the call so it stays a tail call while still returning into the caller's region
+   (a plain call is rejected: the result is local, not a global return value). *)
 let rec sweep t (local_ (taker : taker)) remaining fills =
   if Size.is_zero remaining
   then exclave_ { unfilled = remaining; rev_fills = fills; stop = Done }

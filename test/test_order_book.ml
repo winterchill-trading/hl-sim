@@ -272,3 +272,27 @@ let%test_unit "random operation sequences preserve book invariants and conserve 
       assert (Option.is_none (Order_book.best_bid book));
       assert (Option.is_none (Order_book.best_ask book)))
 ;;
+
+let%test_unit "a single taker sweeps 200k makers" =
+  let book = Order_book.create btc in
+  let n = 200_000 in
+  let add ~oid ~owner side p s =
+    Order_book.add_limit
+      book
+      ~oid:(Order_id.of_int oid)
+      ~owner:(addr owner)
+      ~side
+      ~px:(Price.of_int p)
+      ~sz:(Size.of_int s)
+      ~tif:Gtc
+      ~time:oid
+      ~next_tid:(fun () -> oid)
+      ()
+  in
+  for i = 1 to n do
+    ignore (add ~oid:i ~owner:(1 + (i % 2)) Sell (100 + (i % 50)) 1 : Order_book.Result.t)
+  done;
+  let r = add ~oid:(n + 1) ~owner:3 Buy 1000 n in
+  [%test_result: int] (List.length r.fills) ~expect:n;
+  assert (Order_book.is_empty book)
+;;
