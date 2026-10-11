@@ -3,6 +3,6 @@
  (inline_tests
   (flags
    (:standard -source-tree-root .)))
- (libraries core hl-protocol hl-sim)
+ (libraries core hl-protocol hl-sim order-book)
  (preprocess
   (pps ppx_jane)))

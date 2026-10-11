@@ -1,5 +1,6 @@
 open! Core
 open! Hl_protocol
+module Notional = Fixed_decimal.Product (Price) (Size) (Usd)
 
 type t =
   { coin : Coin.t
@@ -32,7 +33,7 @@ end
 
 (* PnL of closing [closed] (signed like the position) opened at [entry] at [px]. *)
 let pnl ~entry ~px ~closed =
-  Usd.( - ) (Fixed_math.notional px closed) (Fixed_math.notional entry closed)
+  Usd.( - ) (Notional.mul px closed) (Notional.mul entry closed)
 ;;
 
 let signed (side : Side.t) sz =
@@ -53,11 +54,9 @@ let apply_trade t ~side ~px ~sz : Change.t =
     then (
       (* Increase: weighted average entry. *)
       let notional =
-        Usd.( + )
-          (Fixed_math.notional t.entry_px (Size.abs start))
-          (Fixed_math.notional px sz)
+        Usd.( + ) (Notional.mul t.entry_px (Size.abs start)) (Notional.mul px sz)
       in
-      t.entry_px <- Fixed_math.avg_price ~notional ~size:(Size.abs next);
+      t.entry_px <- Notional.div notional (Size.abs next);
       Usd.zero, if Size.is_positive delta then "Open Long" else "Open Short")
     else (
       let closed =
@@ -84,7 +83,7 @@ let apply_trade t ~side ~px ~sz : Change.t =
   { start_position = start; closed_pnl; dir }
 ;;
 
-let notional t ~mark = Fixed_math.notional mark t.szi
+let notional t ~mark = Notional.mul mark t.szi
 let unrealized_pnl t ~mark = pnl ~entry:t.entry_px ~px:mark ~closed:t.szi
 
 let close_at t ~px =

@@ -25,7 +25,7 @@ type t =
       ; time : int
       }
   | Fill of
-      { fill : Fill.t
+      { fill : Order_book.Fill.t
       ; taker : User_fill.t
       ; maker : User_fill.t
       }

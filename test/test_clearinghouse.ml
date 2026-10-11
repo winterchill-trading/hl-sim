@@ -11,7 +11,7 @@ let meta : Meta.t =
 
 let tid = ref 0
 
-let fill ~taker ~maker ~side p s : Fill.t =
+let fill ~taker ~maker ~side p s : Order_book.Fill.t =
   incr tid;
   { tid = !tid
   ; coin = btc

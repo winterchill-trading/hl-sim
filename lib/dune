@@ -1,6 +1,6 @@
 (library
  (name hl_sim)
  (public_name hl-sim)
- (libraries core hl-protocol)
+ (libraries core fixed-decimal hl-protocol order-book)
  (preprocess
   (pps ppx_jane)))

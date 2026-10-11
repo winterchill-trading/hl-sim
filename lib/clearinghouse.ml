@@ -1,11 +1,18 @@
 open! Core
 open! Hl_protocol
+module Notional = Fixed_decimal.Product (Price) (Size) (Usd)
+
+(* Dimensionless fractions such as fee and funding rates. *)
+module Rate = Fixed_decimal.Make ()
+module Fee = Fixed_decimal.Product (Usd) (Rate) (Usd)
+
+let rate_of_bps bps = Rate.of_float (bps /. 10_000.)
 
 type t =
   { meta : Meta.t
   ; fees : Fee_schedule.t
-  ; taker_rate : int
-  ; maker_rate : int
+  ; taker_rate : Rate.t
+  ; maker_rate : Rate.t
   ; default_leverage : int
   ; accounts : Account.t Address.Table.t
   ; mutable fees_collected : Usd.t
@@ -15,8 +22,8 @@ type t =
 let create ?(fees = Fee_schedule.default) ?(default_leverage = 20) meta =
   { meta
   ; fees
-  ; taker_rate = Fixed_math.rate_of_bps fees.taker_bps
-  ; maker_rate = Fixed_math.rate_of_bps fees.maker_bps
+  ; taker_rate = rate_of_bps fees.taker_bps
+  ; maker_rate = rate_of_bps fees.maker_bps
   ; default_leverage
   ; accounts = Address.Table.create ()
   ; fees_collected = Usd.zero
@@ -88,11 +95,11 @@ let account_value t address ~mark =
 let abs_notional ~mark p = Usd.abs (Position.notional p ~mark:(mark_of ~mark p))
 
 let position_margin t address ~mark (p : Position.t) =
-  Fixed_math.div_int (abs_notional ~mark p) (leverage t address p.coin)
+  Usd.div_int (abs_notional ~mark p) (leverage t address p.coin)
 ;;
 
 let position_maintenance t ~mark (p : Position.t) =
-  Fixed_math.div_int (abs_notional ~mark p) (2 * max_leverage t p.coin)
+  Usd.div_int (abs_notional ~mark p) (2 * max_leverage t p.coin)
 ;;
 
 let margin_used t address ~mark =
@@ -121,7 +128,7 @@ let reduce_only_size t address ~coin ~side =
 let order_margin t address ~coin ~side ~px ~sz =
   let reducible = reduce_only_size t address ~coin ~side in
   let increase = Size.max Size.zero (Size.( - ) sz reducible) in
-  Fixed_math.div_int (Fixed_math.notional px increase) (leverage t address coin)
+  Usd.div_int (Notional.mul px increase) (leverage t address coin)
 ;;
 
 let check_order_margin t address ~coin ~side ~px ~sz ~reserved ~mark =
@@ -150,23 +157,28 @@ module Settlement = struct
   [@@deriving sexp_of]
 end
 
-let settle_side t (fill : Fill.t) ~address ~side ~crossed : Settlement.t =
+let settle_side t (fill : Order_book.Fill.t) ~address ~side ~crossed : Settlement.t =
   let account = account t address in
   let position = Account.position_or_create account fill.coin in
   let change = Position.apply_trade position ~side ~px:fill.px ~sz:fill.sz in
   let rate = if crossed then t.taker_rate else t.maker_rate in
-  let fee = Fixed_math.usd_times_rate (Fixed_math.notional fill.px fill.sz) ~rate in
+  let fee = Fee.mul (Notional.mul fill.px fill.sz) rate in
   Account.add_balance account (Usd.( - ) change.closed_pnl fee);
   t.fees_collected <- Usd.( + ) t.fees_collected fee;
   { address; side; crossed; fee; change }
 ;;
 
-let settle_fill t (fill : Fill.t) =
+let settle_fill t (fill : Order_book.Fill.t) =
   let taker =
     settle_side t fill ~address:fill.taker ~side:fill.taker_side ~crossed:true
   in
   let maker =
-    settle_side t fill ~address:fill.maker ~side:(Fill.maker_side fill) ~crossed:false
+    settle_side
+      t
+      fill
+      ~address:fill.maker
+      ~side:(Order_book.Fill.maker_side fill)
+      ~crossed:false
   in
   taker, maker
 ;;
@@ -209,11 +221,11 @@ module Funding_payment = struct
 end
 
 let apply_funding t ~coin ~rate ~mark =
-  let rate = Fixed_math.rate_of_float rate in
+  let rate = Rate.of_float rate in
   List.filter_map (accounts t) ~f:(fun account ->
     Account.position account coin
     |> Option.map ~f:(fun p ->
-      let payment = Fixed_math.usd_times_rate (Position.notional p ~mark) ~rate in
+      let payment = Fee.mul (Position.notional p ~mark) rate in
       Account.add_balance account (Usd.neg payment);
       Position.add_funding p payment;
       { Funding_payment.address = account.address; coin; szi = p.szi; payment }))

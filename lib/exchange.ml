@@ -1,5 +1,6 @@
 open! Core
 open! Hl_protocol
+module Notional = Fixed_decimal.Product (Price) (Size) (Usd)
 
 module Config = struct
   type t =
@@ -182,7 +183,7 @@ let valid_size t coin sz =
 let valid_price t coin px =
   Price.is_positive px
   &&
-  let is_integer = Price.to_units px % Fixed_math.scale = 0 in
+  let is_integer = Price.to_units px % Price.units_per_one = 0 in
   let max_decimals = Int.max 0 (6 - sz_decimals t coin) in
   let significant =
     Price.to_string px
@@ -198,15 +199,15 @@ let reserved_margin t address =
   resting_orders_of t address
   |> List.filter ~f:(fun (_, (o : Order_book.Resting_order.t)) -> not o.reduce_only)
   |> List.map ~f:(fun (coin, (o : Order_book.Resting_order.t)) ->
-    Fixed_math.div_int
-      (Fixed_math.notional o.px o.remaining)
+    Usd.div_int
+      (Notional.mul o.px o.remaining)
       (Clearinghouse.leverage t.clearinghouse address coin))
   |> Usd.sum
 ;;
 
 (* Matching results *)
 
-let user_fill (fill : Fill.t) (s : Clearinghouse.Settlement.t) : User_fill.t =
+let user_fill (fill : Order_book.Fill.t) (s : Clearinghouse.Settlement.t) : User_fill.t =
   { coin = fill.coin
   ; px = fill.px
   ; sz = fill.sz
@@ -215,7 +216,7 @@ let user_fill (fill : Fill.t) (s : Clearinghouse.Settlement.t) : User_fill.t =
   ; start_position = s.change.start_position
   ; dir = s.change.dir
   ; closed_pnl = s.change.closed_pnl
-  ; hash = Fill.hash fill
+  ; hash = Order_book.Fill.hash fill
   ; oid = (if s.crossed then fill.taker_oid else fill.maker_oid)
   ; crossed = s.crossed
   ; fee = s.fee
@@ -225,7 +226,7 @@ let user_fill (fill : Fill.t) (s : Clearinghouse.Settlement.t) : User_fill.t =
   }
 ;;
 
-let record_fill t book (fill : Fill.t) =
+let record_fill t book (fill : Order_book.Fill.t) =
   let taker_s, maker_s = Clearinghouse.settle_fill t.clearinghouse fill in
   let taker = user_fill fill taker_s
   and maker = user_fill fill maker_s in
@@ -246,7 +247,7 @@ let record_fill t book (fill : Fill.t) =
            { address = fill.maker
            ; order =
                { coin = fill.coin
-               ; side = Fill.maker_side fill
+               ; side = Order_book.Fill.maker_side fill
                ; limit_px = fill.px
                ; sz = Size.zero
                ; oid = fill.maker_oid
@@ -258,9 +259,9 @@ let record_fill t book (fill : Fill.t) =
            })))
 ;;
 
-let avg_px (fills : Fill.t list) ~filled =
-  let notional = Usd.sum (List.map fills ~f:(fun f -> Fixed_math.notional f.px f.sz)) in
-  Fixed_math.avg_price ~notional ~size:filled
+let avg_px (fills : Order_book.Fill.t list) ~filled =
+  let notional = Usd.sum (List.map fills ~f:(fun f -> Notional.mul f.px f.sz)) in
+  Notional.div notional filled
 ;;
 
 let reject t address ?coin ?cloid reason : Order_status.t =
@@ -371,7 +372,7 @@ let pre_trade_checks t address ~asset ~coin ~side ~px ~sz ~reduce_only ~cloid =
       else Ok (Size.min sz reducible))
   in
   let%bind () =
-    if reduce_only || Usd.( >= ) (Fixed_math.notional px sz) t.config.min_order_value
+    if reduce_only || Usd.( >= ) (Notional.mul px sz) t.config.min_order_value
     then Ok ()
     else
       Error

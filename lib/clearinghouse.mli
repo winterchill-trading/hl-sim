@@ -95,7 +95,7 @@ end
 
 (** Applies a fill to both accounts: updates positions, realises PnL into balances and
     charges fees. Returns [(taker, maker)]. *)
-val settle_fill : t -> Fill.t -> Settlement.t * Settlement.t
+val settle_fill : t -> Order_book.Fill.t -> Settlement.t * Settlement.t
 
 module Liquidation : sig
   type t =

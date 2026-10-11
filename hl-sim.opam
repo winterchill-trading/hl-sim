@@ -8,7 +8,9 @@ depends: [
   "ocaml"
   "dune" {>= "3.17"}
   "core"
+  "fixed-decimal"
   "hl-protocol"
+  "order-book"
   "ppx_jane"
   "odoc" {with-doc}
 ]
