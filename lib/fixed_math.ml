@@ -7,8 +7,8 @@ let mul_units a b =
   let sign = if Bool.equal (a < 0) (b < 0) then 1 else -1 in
   let a = abs a
   and b = abs b in
-  (* Split both operands into integer and fractional parts so that every partial
-     product stays well inside 63 bits. *)
+  (* Split both operands into integer and fractional parts so that every partial product
+     stays well inside 63 bits. *)
   let a1 = a / scale
   and a0 = a % scale
   and b1 = b / scale

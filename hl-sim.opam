@@ -6,12 +6,10 @@ homepage: "https://github.com/winterchill-trading/hl-sim"
 bug-reports: "https://github.com/winterchill-trading/hl-sim/issues"
 depends: [
   "ocaml"
-  "dune" {>= "3.0"}
+  "dune" {>= "3.17"}
   "core"
-  "async"
+  "hl-protocol"
   "ppx_jane"
-  "ppx_yojson_conv"
-  "yojson"
   "odoc" {with-doc}
 ]
 build: [

@@ -20,8 +20,8 @@ val notional : Price.t -> Size.t -> Usd.t
 (** [avg_price ~notional ~size] is [notional / size]. Raises if [size] is zero. *)
 val avg_price : notional:Usd.t -> size:Size.t -> Price.t
 
-(** [usd_times_rate usd ~rate] is [usd * rate] where [rate] is a dimensionless fraction
-    in units of [10^-8] (so [rate = 3_500] is 0.035%). *)
+(** [usd_times_rate usd ~rate] is [usd * rate] where [rate] is a dimensionless fraction in
+    units of [10^-8] (so [rate = 3_500] is 0.035%). *)
 val usd_times_rate : Usd.t -> rate:int -> Usd.t
 
 (** [div_int usd n] is [usd / n] truncated toward zero. *)
