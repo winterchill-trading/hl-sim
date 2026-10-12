@@ -9,7 +9,7 @@ let mm = "0x00000000000000000000000000000000000000aa"
 
 let with_server f =
   Log.Global.set_output [];
-  let server = Server.create ~now (Exchange.create ()) in
+  let server = Server.create ~now (Adapt.create_exchange ()) in
   let%bind http = Server.listen server ~port:0 in
   let%bind () = f (Server.port http) in
   Cohttp_async.Server.close http
