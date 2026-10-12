@@ -30,6 +30,18 @@ dune exec hl-sim -- -port 3000
 | `-initial-balance` | 1000000 | USD credited to any address on first use |
 | `-response-delay-ms` | 0 | delay every `/exchange` response; the order takes effect, and its websocket events go out, at once |
 | `-journal` | none | append every accepted `/exchange` request to this file (JSON lines) |
+| `-input-journal` | none | write every engine input (requests, noise traders, anchors) to this binary journal |
+| `-anchor` | none | `VENUE:SYMBOL=COIN`, repeatable: the coin follows that reference (see [Price anchor](#price-anchor)) |
+| `-anchor-raw`, `-anchor-norm` | live | replay the reference from recorded raw minute files or event logs under a directory |
+| `-anchor-from`, `-anchor-to` | | the recorded range: ISO 8601 times with a zone, or dates (`-anchor-to` exclusive; a date means its whole day) |
+| `-anchor-speed` | 1 | pace of a recorded reference: 1 real time, 0 as fast as possible |
+| `-anchor-base-url` | mainnet | API root of a live reference venue |
+| `-anchor-levels` | 5 | reference levels per side resting in the book |
+| `-anchor-mark-interval-ms` | 100 | minimum time between two anchored mark updates |
+| `-anchor-max-staleness-ms` | 5000 | a silent reference goes stale after this long |
+| `-anchor-noise` | 0 | noise traders kept on anchored coins |
+| `-anchor-price-factor`, `-anchor-size-factor` | 1 | scale reference prices and sizes |
+| `-anchor-status-interval-s` | 10 | log each anchor's status this often (0: never) |
 | `-log-level` | info | `debug`, `info`, `warn` or `error` |
 
 Logs go to stderr: fills and liquidations at `info`, every event, request detail and
@@ -94,6 +106,76 @@ JSON object per line, before it is applied:
 `Server.replay` applies the entries to a fresh exchange, stepping the clock to each
 entry's time, which reproduces the original responses, fills and account state as long
 as nothing else traded (run with `-noise-traders 0`).
+
+`-input-journal FILE` records one level lower: every input the engine performs (client
+requests, noise traders, price anchors), in `exchange-core`'s binary `Journal` format.
+`Exchange_core_engine.Journal.replay` with the exchange's configuration
+(`Adapt.config ()`) rebuilds the whole run, anchored or not, without the reference data.
+The file is flushed every second and on shutdown.
+
+### Price anchor
+
+`-anchor VENUE:SYMBOL=COIN` ties a simulated coin to a reference market through the
+[price-anchor](https://github.com/winterchill-trading/price-anchor) library: the mark
+and funding follow the reference, its top `-anchor-levels` levels per side rest in the
+book (account `anchor:<venue>:<symbol>`), and resting client orders fill when the
+reference trades at or through them (IOCs from `anchor-taker:<venue>:<symbol>`). Anchored
+coins have no noise traders unless `-anchor-noise N`. The reference can be any venue
+whose client is linked in, Hyperliquid or Binance for now, so BTC here can follow
+Binance's BTCUSDT.
+
+```sh
+# Live, read-only (no keys): BTC follows Hyperliquid mainnet, ETH follows Binance
+dune exec hl-sim -- -anchor hyperliquid:BTC -anchor binance:ETHUSDT=ETH
+
+# A recorded minute (market-recorder raw files), in real time
+dune exec hl-sim -- -anchor hyperliquid:BTC -anchor-raw test/fixtures \
+  -anchor-from 2026-10-12T13:35:00Z -anchor-to 2026-10-12T13:36:00Z
+
+# Normalized event logs for a day, as fast as possible, journaled for replay
+dune exec hl-sim -- -anchor binance:BTCUSDT=BTC -anchor-norm /data/norm \
+  -anchor-from 2026-10-01 -anchor-to 2026-10-01 -anchor-speed 0 -input-journal run.bin
+```
+
+The anchor runs on the scheduler thread that owns the engine: it applies each reference
+item as it arrives (paced by `-anchor-speed` for recorded data), its clock hook runs
+after the server steps the exchange clock, and the resulting events go to websocket
+subscribers at once. A recorded reference fixes `sim time = recv_ts + offset` from its
+first event, so with `-anchor-speed 0` the exchange clock runs ahead of the wall clock.
+
+The reference is stale until its first book, after a gap and after
+`-anchor-max-staleness-ms` without events (also once a recorded range has ended); while
+stale the shadow levels are withdrawn and trade replay stops. Transitions are logged:
+
+```
+Info (anchor hyperliquid:BTC=BTC("anchor: reference fresh"(reference hyperliquid:BTC)(was Waiting_for_book)(stale_for_ns 950598000)(now ...)))
+```
+
+`GET /status` lists every anchor (also logged every `-anchor-status-interval-s`):
+
+```json
+{"ws_connections":0,"ws_dropped":0,"anchors":[{"anchor":"hyperliquid:BTC=BTC","fresh":true,
+ "stale_reason":null,"went_stale":1,"stale_seconds":3.2,"gaps":0,"events":60,"marks_set":4,
+ "funding_rates_set":4,"reference_price":"82493","shadow_levels":10,"shadow_placed":40,
+ "shadow_skipped":0,"shadow_consumed":0,"replay_fills":0,"replays_rejected":0}]}
+```
+
+`scripts/anchor-demo.sh [SECONDS]` runs the simulator anchored to the recorded minute in
+`test/fixtures`, connects the market-maker (when checked out next to this repository)
+once the book is up, and prints the reference price, the book's top and the maker's
+quotes every second:
+
+```
+ref     82493 fresh  book     82492 / 82493      maker     82468 / 82518      shadows 10  replay fills 0
+ref     82493 fresh  book     82478 / 82479      maker     82451 / 82503      shadows 10  replay fills 0
+```
+
+Notes:
+
+- The reference price prefers the venue's mark (Hyperliquid `activeAssetCtx`, Binance
+  `markPrice`) over the book mid, so between funding updates the mark can lag the book.
+- Reference levels are rounded to the coin's tick (bids down, asks up), so several
+  Binance ETHUSDT levels (0.01 tick) can share one simulated ETH level (0.1 tick).
 
 ### Websocket
 
@@ -183,6 +265,7 @@ are in the [exchange-core README](https://github.com/winterchill-trading/exchang
 | `Adapt` | Hyperliquid view of the engine: default universe, instruments with Hyperliquid's price and size rules, asset index mapping, the exchange and info endpoints in hl-protocol types, error wording, `User_fill` with `dir` labels, `Trade`, `Order_update`, `Clearinghouse_state` |
 | `Active_asset_ctx` | the `activeAssetCtx` channel: payload from the engine, day volume stats, subscription requests (not in hl-protocol yet) |
 | `Journal` | JSON-lines journal of accepted `/exchange` requests, for replay |
+| `Anchoring` | price anchors: `-anchor` specs, the reference sources (live feed of the linked clients, raw files, event logs), the anchor wired to the server's clock and websocket, its status |
 | `Server` | cohttp-async server for `/info`, `/exchange` and the `/ws` websocket (async_websocket); owns the engine and drives its market simulation |
 
 ## Hyperliquid specifics
@@ -222,3 +305,6 @@ error messages, fills, `clearinghouseState`, events), a seeded market simulation
 Hyperliquid universe, and the HTTP and websocket server on a free port with a fixed
 clock. Engine tests (clearinghouse, properties) live in exchange-core, order book tests
 in order-book.
+Anchor tests: a simulator anchored live to another one serving as the reference, and an
+anchored run over the recorded minute in `test/fixtures` (copied from hl-client) whose
+engine journal replays to the same book, marks and client fills.
