@@ -1,6 +1,9 @@
 open! Core
 open! Async
 open! Hl_protocol
+module Exchange = Exchange_core_engine.Exchange
+module Event = Exchange_core_engine.Event
+module Market_sim = Exchange_core_engine.Market_sim
 
 module Config = struct
   type t =
@@ -102,7 +105,7 @@ let flush_l2 t =
   let coins = Hash_set.to_list t.dirty_books |> List.sort ~compare:Coin.compare in
   Hash_set.clear t.dirty_books;
   List.iter coins ~f:(fun coin ->
-    Option.iter (Exchange.l2_book t.exchange coin) ~f:(fun book ->
+    Option.iter (Adapt.l2_book t.exchange coin) ~f:(fun book ->
       broadcast t (L2_book { coin }) (L2_book book)))
 ;;
 
@@ -117,20 +120,20 @@ let log_event (event : Event.t) =
   match event with
   | Fill { fill; _ } ->
     Log.Global.info
-      "fill %s %s %s@%s taker=%s maker=%s tid=%d"
-      (Coin.to_string fill.coin)
+      "fill %s %s %s@%s taker=%s maker=%s tid=%s"
+      (Coin.to_string fill.symbol)
       (Side.to_wire fill.taker_side)
       (Size.to_string fill.sz)
       (Price.to_string fill.px)
       (Address.to_string fill.taker)
       (Address.to_string fill.maker)
-      fill.tid
+      (Exchange_core.Trade_id.to_string fill.tid)
   | Liquidation { liquidation = l; _ } ->
     Log.Global.info
       "liquidation %s %s %s@%s pnl=%s"
-      (Address.to_string l.address)
-      (Coin.to_string l.coin)
-      (Size.to_string l.szi)
+      (Address.to_string l.account)
+      (Coin.to_string l.symbol)
+      (Size.to_string l.size)
       (Price.to_string l.px)
       (Usd.to_string l.pnl)
   | Order_accepted _ | Order_rejected _ | Order_filled _ | Order_cancelled _ | Funding _
@@ -145,19 +148,20 @@ let publish t =
       events
       ~init:(Coin.Map.empty, Address.Map.empty, Address.Map.empty)
       ~f:(fun (trades, fills, updates) event ->
-        Option.iter (Event.book_coin event) ~f:(Hash_set.add t.dirty_books);
+        Option.iter (Event.book_symbol event) ~f:(Hash_set.add t.dirty_books);
         let updates =
-          match Event.to_order_update event with
+          match Adapt.order_update event with
           | Some (address, update) -> Map.add_multi updates ~key:address ~data:update
           | None -> updates
         in
         match event with
         | Fill { fill; taker; maker } ->
-          ( Map.add_multi trades ~key:fill.coin ~data:(Order_book.Fill.to_trade fill)
+          let user_fill settlement = Adapt.user_fill { fill; settlement } in
+          ( Map.add_multi trades ~key:fill.symbol ~data:(Adapt.trade fill)
           , Map.add_multi
-              (Map.add_multi fills ~key:fill.taker ~data:taker)
+              (Map.add_multi fills ~key:fill.taker ~data:(user_fill taker))
               ~key:fill.maker
-              ~data:maker
+              ~data:(user_fill maker)
           , updates )
         | _ -> trades, fills, updates)
   in
@@ -191,13 +195,13 @@ let handle_info t (req : Info_request.t) =
     let response : Info_response.t option =
       match req with
       | L2_book { coin; n_sig_figs = _; mantissa = _ } ->
-        Exchange.l2_book ex coin |> Option.map ~f:(fun b -> Info_response.L2_book b)
-      | All_mids -> Some (All_mids (Exchange.all_mids ex))
-      | Open_orders { user } -> Some (Open_orders (Exchange.open_orders ex user))
-      | User_fills { user } -> Some (User_fills (Exchange.user_fills ex user))
+        Adapt.l2_book ex coin |> Option.map ~f:(fun b -> Info_response.L2_book b)
+      | All_mids -> Some (All_mids (Adapt.all_mids ex))
+      | Open_orders { user } -> Some (Open_orders (Adapt.open_orders ex user))
+      | User_fills { user } -> Some (User_fills (Adapt.user_fills ex user))
       | Clearinghouse_state { user } ->
-        Some (Clearinghouse_state (Exchange.clearinghouse_state ex user))
-      | Meta -> Some (Meta (Exchange.meta ex))
+        Some (Clearinghouse_state (Adapt.clearinghouse_state ex user))
+      | Meta -> Some (Meta (Adapt.meta ex))
     in
     match response with
     | Some r -> Info_response.yojson_of_t r
@@ -209,14 +213,14 @@ let handle_exchange t address (req : Exchange_request.t) : Exchange_response.t =
   mutate t ~f:(fun ex ->
     match req.action with
     | Order { orders; grouping = _ } ->
-      Exchange_response.Ok (Order (List.map orders ~f:(Exchange.place_order ex address)))
+      Exchange_response.Ok (Order (List.map orders ~f:(Adapt.place_order ex address)))
     | Cancel { cancels } ->
-      Exchange_response.Ok (Cancel (List.map cancels ~f:(Exchange.cancel ex address)))
+      Exchange_response.Ok (Cancel (List.map cancels ~f:(Adapt.cancel ex address)))
     | Cancel_by_cloid { cancels } ->
       Exchange_response.Ok
-        (Cancel (List.map cancels ~f:(Exchange.cancel_by_cloid ex address)))
+        (Cancel (List.map cancels ~f:(Adapt.cancel_by_cloid ex address)))
     | Modify modify ->
-      (match Exchange.modify ex address modify with
+      (match Adapt.modify ex address modify with
        | Error msg -> Exchange_response.Err msg
        | Resting _ | Filled _ | Waiting_for_fill | Waiting_for_trigger ->
          Exchange_response.Ok Default))
@@ -227,15 +231,13 @@ let handle_exchange t address (req : Exchange_request.t) : Exchange_response.t =
 let ws_snapshot t conn (sub : Subscription.t) =
   match sub with
   | L2_book { coin } ->
-    Option.iter (Exchange.l2_book t.exchange coin) ~f:(fun book ->
-      send conn (L2_book book))
-  | All_mids -> send conn (All_mids (Exchange.all_mids t.exchange))
+    Option.iter (Adapt.l2_book t.exchange coin) ~f:(fun book -> send conn (L2_book book))
+  | All_mids -> send conn (All_mids (Adapt.all_mids t.exchange))
   | User_fills { user } ->
     ensure_account t user;
     send
       conn
-      (User_fills
-         { is_snapshot = true; user; fills = Exchange.user_fills t.exchange user })
+      (User_fills { is_snapshot = true; user; fills = Adapt.user_fills t.exchange user })
   | Order_updates { user } -> ensure_account t user
   | Trades _ -> ()
 ;;
@@ -360,6 +362,11 @@ let port server = Cohttp_async.Server.listening_on server
 
 let start_periodic t =
   Clock_ns.every t.config.all_mids_interval (fun () ->
-    broadcast t All_mids (All_mids (Exchange.all_mids t.exchange)));
+    broadcast t All_mids (All_mids (Adapt.all_mids t.exchange)));
   Clock_ns.every t.config.step_interval (fun () -> mutate t ~f:ignore)
+;;
+
+let run_market_sim t sim =
+  Clock_ns.every (Market_sim.config sim).tick_interval (fun () ->
+    mutate t ~f:(fun _ -> Market_sim.tick sim))
 ;;

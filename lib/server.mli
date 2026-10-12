@@ -1,5 +1,6 @@
-(** HTTP and websocket front end for {!Exchange}, speaking Hyperliquid's public API on a
-    single port:
+(** HTTP and websocket front end for the venue-neutral engine
+    ({!Exchange_core_engine.Exchange}, translated by {!Adapt}), speaking Hyperliquid's
+    public API on a single port:
 
     - [POST /info]: an {!Hl_protocol.Info_request.t}, answered with the
       {!Hl_protocol.Info_response.t} JSON ([null] for an unknown coin). [nSigFigs] and
@@ -24,6 +25,7 @@
 open! Core
 open! Async
 open! Hl_protocol
+module Exchange := Exchange_core_engine.Exchange
 
 module Config : sig
   type t =
@@ -77,6 +79,10 @@ val port : (Socket.Address.Inet.t, int) Cohttp_async.Server.t -> int
 
 (** Starts the periodic tasks: [allMids] broadcasts and clock steps. *)
 val start_periodic : t -> unit
+
+(** Calls {!Exchange_core_engine.Market_sim.tick} every [tick_interval] through {!mutate},
+    so the resulting events reach websocket subscribers. *)
+val run_market_sim : t -> Exchange_core_engine.Market_sim.t -> unit
 
 (** Number of open websocket connections. *)
 val num_ws_connections : t -> int
