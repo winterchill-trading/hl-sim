@@ -3,14 +3,16 @@
 Hyperliquid exchange simulator
 
 Built with [OxCaml](https://oxcaml.org) and the Jane Street library stack (Base, Core).
-Requests and responses use the wire types from
-[hl-protocol](https://github.com/winterchill-trading/hl-protocol). Matching is done by
-[order-book](https://github.com/winterchill-trading/order-book), and fixed-point
-arithmetic comes from [fixed-decimal](https://github.com/winterchill-trading/fixed-decimal).
+hl-sim is a Hyperliquid adapter over the venue-neutral engine in
+[exchange-core](https://github.com/winterchill-trading/exchange-core)
+(`exchange-core-engine`: matching, clearinghouse, margin, funding, liquidation and
+synthetic order flow). Requests and responses use the wire types from
+[hl-protocol](https://github.com/winterchill-trading/hl-protocol).
 
-The package has a pure matching and accounting engine (`Exchange`), an HTTP and
-websocket server speaking Hyperliquid's public API (`Server`), a synthetic order flow
-generator (`Market_sim`) and the `hl-sim` executable that runs them together.
+The package has `Adapt`, which maps Hyperliquid's universe, asset indices, requests,
+responses, error messages and websocket payloads onto the engine, an HTTP and websocket
+server speaking Hyperliquid's public API (`Server`), and the `hl-sim` executable that
+runs them together with the engine's market simulation.
 
 ## Running
 
@@ -102,86 +104,64 @@ snapshot after changes to that book, at most every 50ms. `userFills` starts with
 ```sh
 opam switch create 5.2.0+ox --repos ox=git+https://github.com/oxcaml/opam-repository.git,default
 opam pin add fixed-decimal https://github.com/winterchill-trading/fixed-decimal.git --no-action
+opam pin add exchange-core https://github.com/winterchill-trading/exchange-core.git --no-action
 opam pin add hl-protocol https://github.com/winterchill-trading/hl-protocol.git --no-action
 opam pin add order-book https://github.com/winterchill-trading/order-book.git --no-action
+opam pin add exchange-core-engine https://github.com/winterchill-trading/exchange-core.git --no-action
 opam install . --deps-only --with-test
 dune build && dune test
 ```
 
-Inside a dune workspace that also contains `hl-protocol`, `fixed-decimal` and
-`order-book`, dune uses
-the sibling sources and the pins are not needed.
+Inside a dune workspace that also contains `hl-protocol`, `fixed-decimal`,
+`order-book` and `exchange-core`, dune uses the sibling sources and the pins are not
+needed.
 
 ## Modules
 
-All modules live under `Hl_sim`. The order book (`Order_book`, with fills as
-`Order_book.Fill`) lives in the `order-book` library.
+All modules live under `Hl_sim`. The engine (`Exchange`, `Clearinghouse`, `Position`,
+`Event`, `Market_sim`, ...) is `Exchange_core_engine` from exchange-core; its design notes
+(determinism, matching, margin, liquidation, funding, fixed point, market simulation)
+are in the [exchange-core README](https://github.com/winterchill-trading/exchange-core).
 
 | Module | Description |
 | --- | --- |
-| `Position` | Signed size, weighted entry price, realised PnL and funding for one coin |
-| `Account` | USD balance, positions and per-coin leverage of one address |
-| `Fee_schedule` | Maker/taker fees in basis points (default 1 / 3.5 bps) |
-| `Clearinghouse` | All accounts: fill settlement, fees, initial and maintenance margin, liquidation, funding, `clearinghouseState` |
-| `Event` | Log entries: order accepted/rejected/filled/cancelled, fill, liquidation, funding |
-| `Exchange` | Top level: books per coin, clearinghouse, marks, id counters, clock, event log; exchange and info endpoints |
-| `Server` | cohttp-async server for `/info`, `/exchange` and the `/ws` websocket (async_websocket); owns the `Exchange` |
-| `Market_sim` | Seeded random-walk reference prices, marks, and noise traders posting, cancelling and taking |
+| `Adapt` | Hyperliquid view of the engine: default universe, instruments with Hyperliquid's price and size rules, asset index mapping, the exchange and info endpoints in hl-protocol types, error wording, `User_fill` with `dir` labels, `Trade`, `Order_update`, `Clearinghouse_state` |
+| `Server` | cohttp-async server for `/info`, `/exchange` and the `/ws` websocket (async_websocket); owns the engine and drives its market simulation |
 
-## Design notes
+## Hyperliquid specifics
 
-- **Determinism.** Time is an `int` count of nanoseconds advanced by the caller with
-  `Exchange.step`; the engine never reads the wall clock. Oids and trade ids are
-  sequential. Hyperliquid-facing timestamps are reported in milliseconds.
-- **Matching** is price-time priority with maker-price fills and self-trade prevention;
-  see the [order-book](https://github.com/winterchill-trading/order-book) design notes.
-  Market orders are IOC orders priced `slippage_bps` (default 5%) through the best
-  opposite price, as Hyperliquid's SDKs send them.
-- **Order statuses** follow Hyperliquid: an order that rests (even after partial fills)
-  is `resting`; an IOC or market order with any fill is `filled` with the filled size and
-  average price; an IOC order with no fill, an ALO order that would cross and failed
-  checks are `error` with Hyperliquid's message where one exists.
-- **Validation.** Size must be a multiple of `10^-szDecimals`; price must have at most 5
-  significant figures (integers always allowed) and `6 - szDecimals` decimals; orders
-  must be worth at least $10 unless reduce-only; reduce-only orders are clipped to the
-  position; trigger orders are rejected.
-- **Margin.** Cross margin only. Account value is balance plus unrealised PnL at mark.
-  A new order needs `notional / leverage` for the part that increases the position,
-  out of account value minus position margin minus margin held by resting orders
-  (resting orders reserve their full notional / leverage). Maintenance margin is
-  `notional / (2 * maxLeverage)`. Default leverage is `min 20 maxLeverage`.
-- **Mark price** is the last `set_mark`, else the last trade price, else the book mid.
-- **Liquidation.** `set_mark` and `step` close every position of an account whose value
-  is below maintenance margin at mark and cancel its resting orders. There is no
-  liquidator or backstop: the closed size leaves open interest, and losses beyond the
-  balance leave a negative balance.
-- **Funding** is charged at each multiple of the funding interval (1 hour) crossed by
-  `step`: every position pays `szi * mark * rate`, so longs pay shorts when the rate is
-  positive. The rate is per coin (`set_funding_rate`), default 0.00125%; it is not
-  derived from a premium index.
-- **Modify** cancels the target and places the replacement with a new oid (losing
-  priority). If the replacement is rejected the original stays cancelled.
-- **Fixed point.** `Price`, `Size` and `Usd` count units of `10^-8` in an `int`.
-  Notional values use `Fixed_decimal.Product (Price) (Size) (Usd)` and fee and funding
-  rates a private `Rate` type; products and quotients never overflow an intermediate
-  and truncate toward zero.
+These live in `Adapt`; everything else is the engine's behaviour.
 
-- **Server.** All exchange access happens on the Async scheduler thread, so there is no
-  locking. Before each request the exchange clock is stepped to the wall clock (funding
-  and liquidation run then and on a 1s timer); events produced by a request are
-  published to websocket subscribers right after it. The websocket upgrade uses
-  cohttp-async's `` `Expert `` response, which hands the raw reader and writer to
-  async_websocket after writing the `101` response.
-- **Market simulation.** Each coin's reference price is a geometric random walk with
-  `-vol-bps` volatility per second, stepped every 100ms; the mark follows it. Noise
-  traders (addresses `0xffff...ff0000000N`, $10M each) post GTC orders up to 25 bps from
-  the reference, cancel old ones and occasionally send market orders. Runs are
-  reproducible for a seed, given the same sequence of external requests.
+- **Universe.** BTC (szDecimals 5, 40x), ETH (4, 25x), SOL (2, 20x), asset indices in
+  that order. Each becomes an `Exchange_core.Instrument` with size step
+  `10^-szDecimals`, price tick `10^-(6 - szDecimals)`, at most 5 significant figures
+  (integers always allowed) and the base fee tier (taker 3.5 bps, maker 1 bp).
+- **Timestamps** are reported in milliseconds (the engine counts nanoseconds).
+- **Order statuses** follow Hyperliquid: `resting`, `filled` with total size and average
+  price, or `error` with Hyperliquid's message and its ` asset=N` suffix where one exists.
+  Trigger orders are rejected (`Trigger orders are not supported.`), as are unknown asset
+  indices (`Asset N does not exist.`). A `modify` whose replacement is rejected by these
+  two checks leaves the target untouched.
+- **Fills** carry Hyperliquid's `dir` labels (`Open Long`, `Close Short`,
+  `Long > Short`, ...), `feeToken` `USDC` and a placeholder hash derived from the trade
+  id. A self-trade cancel is reported as `selfTradeCanceled` and a liquidation cancel as
+  `marginCanceled` in `orderUpdates`.
+- **Market orders** use 5% slippage, as Hyperliquid's SDKs send them.
+
+### Server
+
+All exchange access happens on the Async scheduler thread, so there is no locking.
+Before each request the exchange clock is stepped to the wall clock (funding and
+liquidation run then and on a 1s timer); events produced by a request are published to
+websocket subscribers right after it. The websocket upgrade uses cohttp-async's
+`` `Expert `` response, which hands the raw reader and writer to async_websocket after
+writing the `101` response. The market simulation ticks every 100ms through the same
+path.
 
 ## Tests
 
-`dune test` runs expect tests (fees, PnL, liquidation, funding, exchange flows, a
-seeded market simulation, and the HTTP and websocket server on a free port with a fixed
-clock) and `Base_quickcheck` properties: balances plus unrealised PnL plus fees are
-conserved.
-Order book tests live in `order-book`.
+`dune test` runs expect tests of the Hyperliquid endpoints through `Adapt` (statuses,
+error messages, fills, `clearinghouseState`, events), a seeded market simulation on the
+Hyperliquid universe, and the HTTP and websocket server on a free port with a fixed
+clock. Engine tests (clearinghouse, properties) live in exchange-core, order book tests
+in order-book.
