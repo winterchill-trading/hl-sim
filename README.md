@@ -28,6 +28,7 @@ dune exec hl-sim -- -port 3000
 | `-coins` | all | comma-separated coins the noise traders trade |
 | `-noise-traders` | 10 | noise trader accounts; 0 disables the market simulation |
 | `-initial-balance` | 1000000 | USD credited to any address on first use |
+| `-response-delay-ms` | 0 | delay every `/exchange` response; the order takes effect, and its websocket events go out, at once |
 | `-journal` | none | append every accepted `/exchange` request to this file (JSON lines) |
 | `-log-level` | info | `debug`, `info`, `warn` or `error` |
 
