@@ -249,8 +249,14 @@ let command =
                  ~source:(source_name : string)];
            don't_wait_for
              (let%map () = Anchoring.run ~speed anchoring source in
-              Log.Global.error_s
-                [%message "anchor source closed" ~anchor:(Anchoring.Spec.to_string spec)]))
+              (* A recorded source ends; a live one only closes on failure. *)
+              let level = if String.equal source_name "live" then `Error else `Info in
+              Log.Global.sexp
+                ~level
+                [%message
+                  "anchor source finished"
+                    ~anchor:(Anchoring.Spec.to_string spec)
+                    ~source:(source_name : string)]))
        in
        Cohttp_async.Server.close_finished http)
 ;;
