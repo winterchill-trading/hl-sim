@@ -89,6 +89,30 @@ val create
 val spec : t -> Spec.t
 val anchor : t -> Price_anchor.Anchor.t
 
+module Status : sig
+  type t =
+    { anchor : string (** the spec, e.g. [binance:BTCUSDT=BTC] *)
+    ; fresh : bool
+    ; stale_reason : string option (** while stale *)
+    ; went_stale : int (** fresh-to-stale transitions, counting the initial wait *)
+    ; stale_seconds : float (** simulated time spent stale so far *)
+    ; gaps : int
+    ; events : int (** reference events applied *)
+    ; marks_set : int
+    ; funding_rates_set : int
+    ; reference_price : string option (** scaled and rounded to the coin's tick *)
+    ; shadow_levels : int (** reference levels resting in the book now *)
+    ; shadow_placed : int
+    ; shadow_skipped : int
+    ; shadow_consumed : int (** shadow fills by simulated takers *)
+    ; replay_fills : int (** trade-replay orders that filled simulated orders *)
+    ; replays_rejected : int
+    }
+  [@@deriving sexp_of, yojson_of]
+end
+
+val status : t -> Status.t
+
 (** Applies every item of [source] to the anchor ({!Price_anchor.Source.run}), publishing
     the resulting events after each one. [speed] paces recorded time ([1.] real time,
     [0.], the default, as fast as items come). Determined when the source closes. *)

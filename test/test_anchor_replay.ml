@@ -82,6 +82,10 @@ let%expect_test "an anchored run replays from its journal" =
     ((events 64) (marks_set 6) (funding_rates_set 4) (replays 2) (went_stale 3)
      (stale ()) (client_fills 2) (inputs 188))
     |}];
+  print_endline
+    (Yojson.Safe.pretty_to_string
+       (Anchoring.Status.yojson_of_t (Anchoring.status anchoring)));
+  [%expect {| |}];
   let journal = Engine_journal.to_string (Queue.to_list inputs) in
   let replayed =
     Engine_journal.replay

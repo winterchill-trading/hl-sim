@@ -154,6 +154,53 @@ let create ?(config = Config.default) ?market_sim ?log server (spec : Spec.t) =
   { spec; anchor; server }
 ;;
 
+module Status = struct
+  open Ppx_yojson_conv_lib.Yojson_conv.Primitives
+
+  type t =
+    { anchor : string
+    ; fresh : bool
+    ; stale_reason : string option
+    ; went_stale : int
+    ; stale_seconds : float
+    ; gaps : int
+    ; events : int
+    ; marks_set : int
+    ; funding_rates_set : int
+    ; reference_price : string option
+    ; shadow_levels : int
+    ; shadow_placed : int
+    ; shadow_skipped : int
+    ; shadow_consumed : int
+    ; replay_fills : int
+    ; replays_rejected : int
+    }
+  [@@deriving sexp_of, yojson_of]
+end
+
+let status t : Status.t =
+  let stats = Anchor.stats t.anchor in
+  { anchor = Spec.to_string t.spec
+  ; fresh = Option.is_none stats.stale
+  ; stale_reason =
+      Option.map stats.stale ~f:(fun reason ->
+        Sexp.to_string [%sexp (reason : Anchor.Stale_reason.t)])
+  ; went_stale = stats.went_stale
+  ; stale_seconds = Float.of_int stats.stale_ns /. 1e9
+  ; gaps = stats.gaps
+  ; events = stats.events
+  ; marks_set = stats.marks_set
+  ; funding_rates_set = stats.funding_rates_set
+  ; reference_price = Option.map (Anchor.reference_price t.anchor) ~f:Price.to_string
+  ; shadow_levels = List.length (Anchor.shadow_orders t.anchor)
+  ; shadow_placed = stats.shadow.placed
+  ; shadow_skipped = stats.shadow.skipped
+  ; shadow_consumed = stats.shadow.consumed
+  ; replay_fills = stats.replays
+  ; replays_rejected = stats.replays_rejected
+  }
+;;
+
 let run ?speed ?time_source t source =
   Source.run ?speed ?time_source source ~anchor:t.anchor ~on_item:(fun _ ->
     Server.publish_events t.server)
