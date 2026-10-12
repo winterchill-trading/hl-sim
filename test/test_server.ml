@@ -7,9 +7,9 @@ open! Hl_sim
 let now () = 1_700_000_000_000_000_000
 let mm = "0x00000000000000000000000000000000000000aa"
 
-let with_server f =
+let with_server ?config f =
   Log.Global.set_output [];
-  let server = Server.create ~now (Adapt.create_exchange ()) in
+  let server = Server.create ?config ~now (Adapt.create_exchange ()) in
   let%bind http = Server.listen server ~port:0 in
   let%bind () = f (Server.port http) in
   Cohttp_async.Server.close http
@@ -132,6 +132,55 @@ let%expect_test "websocket l2Book subscription" =
     let%bind () = receive incoming in
     [%expect
       {| {"channel":"l2Book","data":{"coin":"BTC","time":1700000000000,"levels":[[{"px":"99000","sz":"0.001","n":1}],[]]}} |}];
+    Pipe.close outgoing;
+    return ())
+;;
+
+let%expect_test "-response-delay-ms delays the ack, not the order" =
+  let delay = Time_ns.Span.of_int_ms 300 in
+  with_server ~config:{ Server.Config.default with response_delay = delay } (fun port ->
+    let%bind incoming, outgoing = ws_connect port in
+    [%expect
+      {|
+         HTTP/1.1 101 Switching Protocols
+         upgrade: websocket
+         connection: Upgrade
+         sec-websocket-accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+         |}];
+    Pipe.write_without_pushback
+      outgoing
+      (sprintf
+         {|{"method":"subscribe","subscription":{"type":"orderUpdates","user":"%s"}}|}
+         mm);
+    let%bind () = receive incoming in
+    [%expect
+      {| {"channel":"subscriptionResponse","data":{"method":"subscribe","subscription":{"type":"orderUpdates","user":"0x00000000000000000000000000000000000000aa"}}} |}];
+    let started = Time_ns.now () in
+    let elapsed () = Time_ns.diff (Time_ns.now ()) started in
+    let ack =
+      let%map () =
+        post
+          port
+          "/exchange"
+          ~headers:[ "X-Address", mm ]
+          (order ~is_buy:true ~px:"99000" ~sz:"0.001")
+      in
+      elapsed ()
+    in
+    let%bind () = receive incoming in
+    let update_at = elapsed () in
+    let%bind ack_at = ack in
+    [%expect
+      {|
+         {"channel":"orderUpdates","data":[{"order":{"coin":"BTC","side":"B","limitPx":"99000","sz":"0.001","oid":1,"timestamp":1700000000000,"origSz":"0.001"},"status":"open","statusTimestamp":1700000000000}]}
+         200 {"status":"ok","response":{"type":"order","data":{"statuses":[{"resting":{"oid":1}}]}}}
+         |}];
+    print_s
+      [%message
+        ""
+          ~update_before_delay:(Time_ns.Span.(update_at < delay) : bool)
+          ~ack_after_delay:(Time_ns.Span.(ack_at >= delay) : bool)];
+    [%expect {| ((update_before_delay true) (ack_after_delay true)) |}];
     Pipe.close outgoing;
     return ())
 ;;
