@@ -12,6 +12,8 @@ jobs:
         with:
           ocaml-compiler: ocaml-variants.5.2.0+ox
           dune-cache: true
+          # opam's bubblewrap sandbox keeps dependency builds out of the dune cache
+          opam-disable-sandboxing: true
           opam-repositories: |
             ox: https://github.com/oxcaml/opam-repository.git
             default: https://github.com/ocaml/opam-repository.git
