@@ -11,6 +11,7 @@ jobs:
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: ocaml-variants.5.2.0+ox
+          dune-cache: true
           opam-repositories: |
             ox: https://github.com/oxcaml/opam-repository.git
             default: https://github.com/ocaml/opam-repository.git
