@@ -167,6 +167,10 @@ slower (it installs dune into the switch). The input is also deprecated in
 setup-ocaml v3. The time worth saving is in the dependencies, which would need the
 opam switch itself cached after `opam install` (keyed on the sibling pins' commits).
 
+CI now does exactly that through the shared `ox-setup` action from the infra repo
+(its `docs/ci.md` has the cache key rule): the first run took 34 minutes (compiler and
+dependencies), a rerun with unchanged siblings 2 minutes.
+
 ## Modules
 
 All modules live under `Hl_sim`. The engine (`Exchange`, `Clearinghouse`, `Position`,
