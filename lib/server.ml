@@ -42,6 +42,7 @@ type t =
   ; mutable next_conn_id : int
   ; dirty_books : Coin.Hash_set.t
   ; mutable l2_flush_scheduled : bool
+  ; journal : Journal.t option
   }
 
 let wall_clock () = Time_ns.now () |> Time_ns.to_int_ns_since_epoch
@@ -53,7 +54,7 @@ let step_clock t =
   if now > Exchange.now t.exchange then Exchange.step t.exchange ~now
 ;;
 
-let create ?(config = Config.default) ?(now = wall_clock) exchange =
+let create ?(config = Config.default) ?(now = wall_clock) ?journal exchange =
   let t =
     { exchange
     ; config
@@ -63,6 +64,7 @@ let create ?(config = Config.default) ?(now = wall_clock) exchange =
     ; next_conn_id = 0
     ; dirty_books = Coin.Hash_set.create ()
     ; l2_flush_scheduled = false
+    ; journal
     }
   in
   step_clock t;
@@ -211,6 +213,8 @@ let handle_info t (req : Info_request.t) =
 let handle_exchange t address (req : Exchange_request.t) : Exchange_response.t =
   ensure_account t address;
   mutate t ~f:(fun ex ->
+    Option.iter t.journal ~f:(fun journal ->
+      Journal.write journal { time = Exchange.now ex; address; request = req });
     match req.action with
     | Order { orders; grouping = _ } ->
       Exchange_response.Ok (Order (List.map orders ~f:(Adapt.place_order ex address)))
@@ -224,6 +228,22 @@ let handle_exchange t address (req : Exchange_request.t) : Exchange_response.t =
        | Error msg -> Exchange_response.Err msg
        | Resting _ | Filled _ | Waiting_for_fill | Waiting_for_trigger ->
          Exchange_response.Ok Default))
+;;
+
+let replay ?config exchange entries =
+  let clock =
+    ref
+      (match entries with
+       | (first : Journal.Entry.t) :: _ -> first.time
+       | [] -> Exchange.now exchange)
+  in
+  let t = create ?config ~now:(fun () -> !clock) exchange in
+  let responses =
+    List.map entries ~f:(fun { time; address; request } ->
+      clock := time;
+      handle_exchange t address request)
+  in
+  t, responses
 ;;
 
 (* Websocket connections *)

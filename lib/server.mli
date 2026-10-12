@@ -47,8 +47,14 @@ type t
 
 (** [now] returns the current time in nanoseconds since the epoch (default: the wall
     clock). The exchange is stepped to [now ()] before each request. Tests pass a constant
-    to make timestamps deterministic. *)
-val create : ?config:Config.t -> ?now:(unit -> int) -> Exchange.t -> t
+    to make timestamps deterministic. Every request accepted by {!handle_exchange} is
+    appended to [journal], if given. *)
+val create
+  :  ?config:Config.t
+  -> ?now:(unit -> int)
+  -> ?journal:Journal.t
+  -> Exchange.t
+  -> t
 
 val config : t -> Config.t
 
@@ -64,6 +70,15 @@ val mutate : t -> f:(Exchange.t -> 'a) -> 'a
 
 val handle_info : t -> Info_request.t -> Yojson.Safe.t
 val handle_exchange : t -> Address.t -> Exchange_request.t -> Exchange_response.t
+
+(** Applies journaled requests, in order, to a server over [exchange] (normally fresh from
+    {!Adapt.create_exchange}), stepping the clock to each entry's [time] first. Returns
+    the server, whose clock stays at the last entry's time, and the responses. *)
+val replay
+  :  ?config:Config.t
+  -> Exchange.t
+  -> Journal.Entry.t list
+  -> t * Exchange_response.t list
 
 (** {2 Network} *)
 
