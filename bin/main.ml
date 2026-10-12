@@ -4,6 +4,33 @@ open! Hl_protocol
 open! Hl_sim
 module Market_sim = Exchange_core_engine.Market_sim
 
+(* [-anchor-from]/[-anchor-to]: times with a zone, or dates (UTC days). *)
+module Recorded_range = struct
+  type t =
+    { from : Time_ns.t
+    ; to_ : Time_ns.t
+    }
+
+  let parse ~end_of_day s =
+    match Date.of_string s with
+    | date ->
+      let date = if end_of_day then Date.add_days date 1 else date in
+      Time_ns.of_date_ofday ~zone:Time_float.Zone.utc date Time_ns.Ofday.start_of_day
+    | exception _ -> Time_ns.of_string_with_utc_offset s
+  ;;
+
+  let of_strings ~from ~to_ =
+    let from = parse ~end_of_day:false from in
+    let to_ = parse ~end_of_day:true to_ in
+    if Time_ns.( >= ) from to_ then failwith "-anchor-from must be before -anchor-to";
+    { from; to_ }
+  ;;
+
+  let day time = Time_ns.to_date time ~zone:Time_float.Zone.utc
+  let first_day t = day t.from
+  let last_day t = day (Time_ns.sub t.to_ (Time_ns.Span.of_int_ns 1))
+end
+
 let command =
   Command.async
     ~summary:"Hyperliquid exchange simulator"
@@ -60,6 +87,34 @@ let command =
          "-anchor-base-url"
          (optional string)
          ~doc:"URL API root of the live reference venue (default: its mainnet)"
+     and anchor_raw =
+       flag
+         "-anchor-raw"
+         (optional string)
+         ~doc:
+           "DIR replay the reference from recorded raw minute files under DIR (the \
+            recorder's data directory) instead of the live feed"
+     and anchor_norm =
+       flag
+         "-anchor-norm"
+         (optional string)
+         ~doc:"DIR replay the reference from normalized event logs under DIR"
+     and anchor_from =
+       flag
+         "-anchor-from"
+         (optional string)
+         ~doc:"TIME start of a recorded reference (ISO 8601 time with zone, or a date)"
+     and anchor_to =
+       flag
+         "-anchor-to"
+         (optional string)
+         ~doc:"TIME end of a recorded reference, exclusive (a date means its whole day)"
+     and anchor_speed =
+       flag
+         "-anchor-speed"
+         (optional_with_default 1. float)
+         ~doc:
+           "X pace of a recorded reference: 1 real time (default), 0 as fast as possible"
      and anchor_levels =
        flag
          "-anchor-levels"
@@ -147,6 +202,33 @@ let command =
          ; size_factor = anchor_size_factor
          }
        in
+       let source_name, speed, anchor_source =
+         let range () =
+           match anchor_from, anchor_to with
+           | Some from, Some to_ -> Recorded_range.of_strings ~from ~to_
+           | _ -> failwith "-anchor-raw and -anchor-norm need -anchor-from and -anchor-to"
+         in
+         match anchor_raw, anchor_norm with
+         | Some _, Some _ -> failwith "-anchor-raw and -anchor-norm exclude each other"
+         | Some dir, None ->
+           let { Recorded_range.from; to_ } = range () in
+           ( "raw"
+           , anchor_speed
+           , fun spec -> return (Anchoring.raw_source ~dir ~from ~to_ spec) )
+         | None, Some dir ->
+           let range = range () in
+           ( "norm"
+           , anchor_speed
+           , Anchoring.norm_source
+               ~dir
+               ~from:(Recorded_range.first_day range)
+               ~to_:(Recorded_range.last_day range) )
+         | None, None ->
+           ( "live"
+           , 0.
+           , Anchoring.live_source ?base_url:(Option.map anchor_base_url ~f:Uri.of_string)
+           )
+       in
        let%bind () =
          Deferred.List.iter ~how:`Sequential anchors ~f:(fun spec ->
            (* Only coins the market simulation trades have noise traders to adjust. *)
@@ -159,16 +241,14 @@ let command =
            let anchoring =
              Anchoring.create ~config:anchor_config ?market_sim server spec
            in
-           let%map source =
-             Anchoring.live_source
-               ?base_url:(Option.map anchor_base_url ~f:Uri.of_string)
-               spec
-             >>| ok_exn
-           in
+           let%map source = anchor_source spec >>| ok_exn in
            Log.Global.info_s
-             [%message "anchored" ~anchor:(Anchoring.Spec.to_string spec) ~source:"live"];
+             [%message
+               "anchored"
+                 ~anchor:(Anchoring.Spec.to_string spec)
+                 ~source:(source_name : string)];
            don't_wait_for
-             (let%map () = Anchoring.run anchoring source in
+             (let%map () = Anchoring.run ~speed anchoring source in
               Log.Global.error_s
                 [%message "anchor source closed" ~anchor:(Anchoring.Spec.to_string spec)]))
        in
