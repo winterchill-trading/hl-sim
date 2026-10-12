@@ -11,6 +11,7 @@
   exchange-core
   exchange-core-engine
   hl-protocol
-  hl-sim)
+  hl-sim
+  uri)
  (preprocess
   (pps ppx_jane)))
