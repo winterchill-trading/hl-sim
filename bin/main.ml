@@ -38,6 +38,11 @@ let command =
             (Usd.to_string Server.Config.default.initial_balance)
             string)
          ~doc:"USD balance credited to any address on first use"
+     and journal =
+       flag
+         "-journal"
+         (optional string)
+         ~doc:"FILE append every accepted /exchange request to FILE (JSON lines)"
      and log_level =
        flag
          "-log-level"
@@ -48,8 +53,14 @@ let command =
        Log.Global.set_output [ Log.Output.stderr () ];
        Log.Global.set_level log_level;
        let exchange = Adapt.create_exchange () in
+       let%bind journal =
+         match journal with
+         | None -> return None
+         | Some path -> Journal.open_file path >>| Option.some
+       in
        let server =
          Server.create
+           ?journal
            ~config:
              { Server.Config.default with
                initial_balance = Usd.of_string initial_balance
