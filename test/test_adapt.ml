@@ -1,6 +1,8 @@
 open! Core
 open! Hl_protocol
 open! Hl_sim
+module Exchange = Exchange_core_engine.Exchange
+module Event = Exchange_core_engine.Event
 open Helpers
 
 let btc_asset = Asset.of_int 0
@@ -20,20 +22,23 @@ let order ?(tif = Tif.Gtc) ?(reduce_only = false) ?cloid side p s : Order_reques
 let place ex n ?tif ?reduce_only ?cloid side p s =
   print_s
     [%sexp
-      (Exchange.place_order ex (addr n) (order ?tif ?reduce_only ?cloid side p s)
+      (Adapt.place_order ex (addr n) (order ?tif ?reduce_only ?cloid side p s)
        : Order_status.t)]
 ;;
 
 let short_addr a = Address.to_string a |> Fn.flip String.drop_prefix 38
 
 let fresh () =
-  let ex = Exchange.create () in
+  let ex = Adapt.create_exchange () in
   List.iter [ 1; 2; 3 ] ~f:(fun n -> Exchange.deposit ex (addr n) (usd "10000"));
   ex
 ;;
 
+let meta = Adapt.default_meta
+
 let summarize (e : Event.t) =
-  let o (order : Open_order.t) =
+  let o order =
+    let order = Adapt.open_order order in
     sprintf
       "oid=%s %s %s@%s"
       (Order_id.to_string order.oid)
@@ -42,22 +47,27 @@ let summarize (e : Event.t) =
       (Price.to_string order.limit_px)
   in
   match e with
-  | Order_accepted { address; order; _ } ->
-    sprintf "accepted %s %s" (short_addr address) (o order)
-  | Order_rejected { address; reason; _ } ->
-    sprintf "rejected %s %s" (short_addr address) reason
-  | Order_filled { address; order; _ } ->
-    sprintf "filled %s %s" (short_addr address) (o order)
-  | Order_cancelled { address; order; reason; _ } ->
+  | Order_accepted { account; order; _ } ->
+    sprintf "accepted %s %s" (short_addr account) (o order)
+  | Order_rejected { account; symbol; reason; _ } ->
+    sprintf
+      "rejected %s %s"
+      (short_addr account)
+      (Adapt.reject_message meta ?coin:symbol reason)
+  | Order_filled { account; order; _ } ->
+    sprintf "filled %s %s" (short_addr account) (o order)
+  | Order_cancelled { account; order; reason; _ } ->
     sprintf
       "cancelled %s %s %s"
-      (short_addr address)
+      (short_addr account)
       (o order)
       (Sexp.to_string [%sexp (reason : Event.Cancel_reason.t)])
   | Fill { fill; taker; maker } ->
+    let taker = Adapt.user_fill { fill; settlement = taker }
+    and maker = Adapt.user_fill { fill; settlement = maker } in
     sprintf
       "fill tid=%d %s@%s taker=%s(%s fee %s) maker=%s(%s fee %s)"
-      fill.tid
+      taker.tid
       (Size.to_string fill.sz)
       (Price.to_string fill.px)
       (short_addr fill.taker)
@@ -69,19 +79,19 @@ let summarize (e : Event.t) =
   | Liquidation { liquidation = l; _ } ->
     sprintf
       "liquidation %s %s %s@%s pnl %s"
-      (short_addr l.address)
-      (Coin.to_string l.coin)
-      (Size.to_string l.szi)
+      (short_addr l.account)
+      (Coin.to_string l.symbol)
+      (Size.to_string l.size)
       (Price.to_string l.px)
       (Usd.to_string l.pnl)
-  | Funding { coin; rate; mark; payments; _ } ->
+  | Funding { symbol; rate; mark; payments; _ } ->
     sprintf
       "funding %s rate=%g mark=%s %s"
-      (Coin.to_string coin)
+      (Coin.to_string symbol)
       rate
       (Price.to_string mark)
       (List.map payments ~f:(fun p ->
-         sprintf "%s:%s" (short_addr p.address) (Usd.to_string p.payment))
+         sprintf "%s:%s" (short_addr p.account) (Usd.to_string p.payment))
        |> String.concat ~sep:" ")
 ;;
 
@@ -111,10 +121,10 @@ let%expect_test "resting, crossing, and the info views" =
     fill tid=2 0.005@100100 taker=0002(Open Long fee 0.175175) maker=0001(Open Short fee 0.05005)
     filled 0002 oid=3 B 0@100100
     |}];
-  print_s [%sexp (Exchange.open_orders ex (addr 1) : Open_order.t list)];
-  print_s [%sexp (Exchange.user_fills ex (addr 2) : User_fill.t list)];
-  print_s [%sexp (Exchange.l2_book ex btc : L2_book.t option)];
-  print_s [%sexp (Exchange.all_mids ex : All_mids.t)];
+  print_s [%sexp (Adapt.open_orders ex (addr 1) : Open_order.t list)];
+  print_s [%sexp (Adapt.user_fills ex (addr 2) : User_fill.t list)];
+  print_s [%sexp (Adapt.l2_book ex btc : L2_book.t option)];
+  print_s [%sexp (Adapt.all_mids ex : All_mids.t)];
   [%expect
     {|
     (((coin BTC) (side Sell) (limit_px 100100) (sz 0.015) (oid 2)
@@ -131,7 +141,7 @@ let%expect_test "resting, crossing, and the info views" =
     (((coin BTC) (time 1000) (bids ()) (asks (((px 100100) (sz 0.015) (n 1))))))
     ()
     |}];
-  print_s [%sexp (Exchange.clearinghouse_state ex (addr 2) : Clearinghouse_state.t)];
+  print_s [%sexp (Adapt.clearinghouse_state ex (addr 2) : Clearinghouse_state.t)];
   [%expect
     {|
     ((positions
@@ -164,14 +174,11 @@ let%expect_test "rejections" =
   place ex 1 ~cloid:(cloid 7) Sell "100002" "0.01";
   print_s
     [%sexp
-      (Exchange.place_order
-         ex
-         (addr 1)
-         { (order Buy "1" "10") with asset = Asset.of_int 9 }
+      (Adapt.place_order ex (addr 1) { (order Buy "1" "10") with asset = Asset.of_int 9 }
        : Order_status.t)];
   print_s
     [%sexp
-      (Exchange.place_order
+      (Adapt.place_order
          ex
          (addr 1)
          { (order Buy "1" "10") with
@@ -214,7 +221,7 @@ let%expect_test "self-trade, IOC partial fill and market orders" =
   place ex 1 Buy "98000" "0.01";
   print_s
     [%sexp
-      (Exchange.market_order ex (addr 3) ~coin:btc ~side:Sell ~sz:(sz "0.03")
+      (Adapt.market_order ex (addr 3) ~coin:btc ~side:Sell ~sz:(sz "0.03")
        : Order_status.t)];
   [%expect
     {|
@@ -251,7 +258,7 @@ let%expect_test "cancel, cancel by cloid and modify" =
   let cancel n oid =
     print_s
       [%sexp
-        (Exchange.cancel ex (addr n) { asset = btc_asset; oid = Order_id.of_int oid }
+        (Adapt.cancel ex (addr n) { asset = btc_asset; oid = Order_id.of_int oid }
          : Cancel_status.t)]
   in
   cancel 2 1;
@@ -259,11 +266,11 @@ let%expect_test "cancel, cancel by cloid and modify" =
   cancel 1 1;
   print_s
     [%sexp
-      (Exchange.cancel_by_cloid ex (addr 1) { asset = btc_asset; cloid = cloid 2 }
+      (Adapt.cancel_by_cloid ex (addr 1) { asset = btc_asset; cloid = cloid 2 }
        : Cancel_status.t)];
   print_s
     [%sexp
-      (Exchange.modify
+      (Adapt.modify
          ex
          (addr 1)
          { oid = Oid (Order_id.of_int 3)
@@ -272,14 +279,14 @@ let%expect_test "cancel, cancel by cloid and modify" =
        : Order_status.t)];
   print_s
     [%sexp
-      (Exchange.modify
+      (Adapt.modify
          ex
          (addr 1)
          { oid = Cloid (cloid 3); order = order Buy "97600" "0.02" }
        : Order_status.t)];
   print_s
     [%sexp
-      (Exchange.modify
+      (Adapt.modify
          ex
          (addr 1)
          { oid = Cloid (cloid 3); order = order Buy "97600" "0.02" }
@@ -298,7 +305,7 @@ let%expect_test "cancel, cancel by cloid and modify" =
     (Error "Cannot modify canceled or filled order")
     |}];
   print_events ex;
-  print_s [%sexp (Exchange.open_orders ex (addr 1) : Open_order.t list)];
+  print_s [%sexp (Adapt.open_orders ex (addr 1) : Open_order.t list)];
   [%expect
     {|
     accepted 0001 oid=1 B 0.01@99000
@@ -352,7 +359,7 @@ let%expect_test "set_mark liquidates and cancels the account's orders" =
     |}];
   Exchange.set_mark ex btc (px "94500");
   print_events ex;
-  print_s [%sexp (Exchange.open_orders ex (addr 4) : Open_order.t list)];
+  print_s [%sexp (Adapt.open_orders ex (addr 4) : Open_order.t list)];
   [%expect
     {|
     liquidation 0004 BTC 0.01@94500 pnl -55
@@ -413,14 +420,14 @@ let%test_unit "random order flow keeps books uncrossed and conserves value" =
         (match cancel with
          | Some oid ->
            ignore
-             (Exchange.cancel
+             (Adapt.cancel
                 ex
                 (addr owner)
                 { asset = btc_asset; oid = Order_id.of_int oid }
               : Cancel_status.t)
          | None ->
            ignore
-             (Exchange.place_order
+             (Adapt.place_order
                 ex
                 (addr owner)
                 (order ~tif side (Int.to_string p) (sprintf "0.%03d" s))
@@ -429,14 +436,17 @@ let%test_unit "random order flow keeps books uncrossed and conserves value" =
       let ch = Exchange.clearinghouse ex in
       let total =
         Usd.sum
-          (Clearinghouse.fees_collected ch
+          (Exchange_core_engine.Clearinghouse.fees_collected ch
            :: List.map [ 1; 2; 3 ] ~f:(fun n ->
-             Clearinghouse.account_value ch (addr n) ~mark:(Exchange.mark ex)))
+             Exchange_core_engine.Clearinghouse.equity
+               ch
+               (addr n)
+               ~mark:(Exchange.mark ex)))
       in
       assert (Usd.( <= ) (Usd.abs (Usd.( - ) total (usd "30000"))) (usd "0.0001"));
       (* Every resting order is listed exactly once in its owner's open orders. *)
       let listed =
-        List.concat_map [ 1; 2; 3 ] ~f:(fun n -> Exchange.open_orders ex (addr n))
+        List.concat_map [ 1; 2; 3 ] ~f:(fun n -> Adapt.open_orders ex (addr n))
       in
       [%test_result: int]
         (List.length listed)
