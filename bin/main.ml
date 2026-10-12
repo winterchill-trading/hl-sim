@@ -2,6 +2,7 @@ open! Core
 open! Async
 open! Hl_protocol
 open! Hl_sim
+module Market_sim = Exchange_core_engine.Market_sim
 
 let command =
   Command.async
@@ -46,7 +47,7 @@ let command =
      fun () ->
        Log.Global.set_output [ Log.Output.stderr () ];
        Log.Global.set_level log_level;
-       let exchange = Exchange.create () in
+       let exchange = Adapt.create_exchange () in
        let server =
          Server.create
            ~config:
@@ -68,11 +69,11 @@ let command =
                seed
              ; vol_bps
              ; noise_traders
-             ; coins = List.map (Option.value coins ~default:[]) ~f:Coin.of_string
+             ; symbols = List.map (Option.value coins ~default:[]) ~f:Coin.of_string
              }
              exchange
          in
-         Market_sim.start sim ~server);
+         Server.run_market_sim server sim);
        Cohttp_async.Server.close_finished http)
 ;;
 
