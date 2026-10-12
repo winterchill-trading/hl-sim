@@ -106,6 +106,7 @@ websocat ws://localhost:3000/ws
 {"method": "subscribe", "subscription": {"type": "orderUpdates", "user": "0x00000000000000000000000000000000000000aa"}}
 {"method": "subscribe", "subscription": {"type": "userFills", "user": "0x00000000000000000000000000000000000000aa"}}
 {"method": "subscribe", "subscription": {"type": "allMids"}}
+{"method": "subscribe", "subscription": {"type": "activeAssetCtx", "coin": "BTC"}}
 {"method": "ping"}
 ```
 
@@ -114,6 +115,14 @@ Every (un)subscribe is answered with a `subscriptionResponse` echo and `ping` wi
 snapshot after changes to that book, at most every 50ms. `userFills` starts with an
 `isSnapshot: true` message; `allMids` starts with a snapshot and repeats every second.
 `trades`, `orderUpdates` and `userFills` are pushed as events happen.
+
+`activeAssetCtx` (perp context: `funding`, `markPx`, `oraclePx`, `midPx`, `impactPxs`,
+`premium`, `openInterest`, day volumes, `prevDayPx`) is sent on subscribe and then with
+every `allMids` broadcast, which is enough for `hl-client feed -streams funding`. The
+engine has no separate oracle, so `oraclePx` equals `markPx` (the market simulation sets
+the mark to its reference price); day volumes cover the current UTC day of the exchange
+clock rather than a rolling 24 hours; `impactPxs` is the best bid and ask. A coin with no
+price yet gets only the `subscriptionResponse`.
 
 Each connection may have at most 10,000 messages waiting to be written
 (`Config.max_ws_queue`). A subscriber that stops reading falls behind once its socket
@@ -147,6 +156,7 @@ are in the [exchange-core README](https://github.com/winterchill-trading/exchang
 | Module | Description |
 | --- | --- |
 | `Adapt` | Hyperliquid view of the engine: default universe, instruments with Hyperliquid's price and size rules, asset index mapping, the exchange and info endpoints in hl-protocol types, error wording, `User_fill` with `dir` labels, `Trade`, `Order_update`, `Clearinghouse_state` |
+| `Active_asset_ctx` | the `activeAssetCtx` channel: payload from the engine, day volume stats, subscription requests (not in hl-protocol yet) |
 | `Journal` | JSON-lines journal of accepted `/exchange` requests, for replay |
 | `Server` | cohttp-async server for `/info`, `/exchange` and the `/ws` websocket (async_websocket); owns the engine and drives its market simulation |
 
