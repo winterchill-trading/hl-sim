@@ -145,6 +145,11 @@ let command =
          "-anchor-size-factor"
          (optional_with_default 1. float)
          ~doc:"F multiply reference sizes by F (default 1)"
+     and anchor_status_interval =
+       flag
+         "-anchor-status-interval-s"
+         (optional_with_default 10 int)
+         ~doc:"S log every anchor's status every S seconds (default 10, 0 disables)"
      and input_journal =
        flag
          "-input-journal"
@@ -244,8 +249,8 @@ let command =
            , Anchoring.live_source ?base_url:(Option.map anchor_base_url ~f:Uri.of_string)
            )
        in
-       let%bind () =
-         Deferred.List.iter ~how:`Sequential anchors ~f:(fun spec ->
+       let%bind anchorings =
+         Deferred.List.map ~how:`Sequential anchors ~f:(fun spec ->
            (* Only coins the market simulation trades have noise traders to adjust. *)
            let market_sim =
              Option.filter market_sim ~f:(fun _ ->
@@ -271,8 +276,21 @@ let command =
                 [%message
                   "anchor source finished"
                     ~anchor:(Anchoring.Spec.to_string spec)
-                    ~source:(source_name : string)]))
+                    ~source:(source_name : string)]);
+           anchoring)
        in
+       if not (List.is_empty anchorings)
+       then (
+         Server.add_status server ~name:"anchors" (fun () ->
+           `List
+             (List.map anchorings ~f:(fun a ->
+                Anchoring.Status.yojson_of_t (Anchoring.status a))));
+         if anchor_status_interval > 0
+         then
+           Clock_ns.every (Time_ns.Span.of_int_sec anchor_status_interval) (fun () ->
+             List.iter anchorings ~f:(fun a ->
+               Log.Global.info_s
+                 [%message "anchor status" ~_:(Anchoring.status a : Anchoring.Status.t)])));
        Cohttp_async.Server.close_finished http)
 ;;
 
