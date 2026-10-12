@@ -16,6 +16,7 @@
   expect_test_helpers_core
   market-data
   price-anchor
+  hl-client
   hl-protocol
   hl-sim
   order-book

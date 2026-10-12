@@ -37,7 +37,11 @@ let state exchange =
     }]
 ;;
 
-let%expect_test "an anchored run replays from its journal" =
+let range_end = Time_ns.add start (Time_ns.Span.of_min 1.)
+
+(* A fresh simulator with the client's three orders, BTC anchored to [source], run to the
+   end of the source. Returns the exchange, its inputs and the anchoring. *)
+let run_anchored source =
   Log.Global.set_output [];
   let exchange = Adapt.create_exchange () in
   let inputs = Queue.create () in
@@ -55,16 +59,24 @@ let%expect_test "an anchored run replays from its journal" =
   let anchoring =
     Anchoring.create ~log:ignore server (Anchoring.Spec.of_string "hyperliquid:BTC")
   in
-  let source =
-    Anchoring.raw_source
-      ~on_error:(fun e -> print_s [%message "raw error" (e : Error.t)])
-      ~dir:"fixtures"
-      ~from:start
-      ~to_:(Time_ns.add start (Time_ns.Span.of_min 1.))
-      (Anchoring.spec anchoring)
-    |> ok_exn
-  in
-  let%bind () = Anchoring.run anchoring source in
+  let%bind source = source (Anchoring.spec anchoring) in
+  let%map () = Anchoring.run anchoring source in
+  exchange, inputs, anchoring
+;;
+
+let raw_source spec =
+  Anchoring.raw_source
+    ~on_error:(fun e -> print_s [%message "raw error" (e : Error.t)])
+    ~dir:"fixtures"
+    ~from:start
+    ~to_:range_end
+    spec
+  |> ok_exn
+  |> return
+;;
+
+let%expect_test "an anchored run replays from its journal" =
+  let%bind exchange, inputs, anchoring = run_anchored raw_source in
   let stats = Price_anchor.Anchor.stats (Anchoring.anchor anchoring) in
   print_s
     [%message
@@ -85,7 +97,8 @@ let%expect_test "an anchored run replays from its journal" =
   print_endline
     (Yojson.Safe.pretty_to_string
        (Anchoring.Status.yojson_of_t (Anchoring.status anchoring)));
-  [%expect {|
+  [%expect
+    {|
     {
       "anchor": "hyperliquid:BTC=BTC",
       "fresh": true,
@@ -115,4 +128,35 @@ let%expect_test "an anchored run replays from its journal" =
     [%message "" ~replay_matches:(Sexp.equal (state exchange) (state replayed) : bool)];
   [%expect {| (replay_matches true) |}];
   return ()
+;;
+
+let with_temp_dir f =
+  let%bind dir = Unix.mkdtemp (Filename.temp_dir_name ^/ "hl-sim-test") in
+  Monitor.protect
+    (fun () -> f dir)
+    ~finally:(fun () -> Unix.system_exn (sprintf "rm -rf %s" (Filename.quote dir)))
+;;
+
+let%expect_test "event logs rebuilt from the raw files anchor the same run" =
+  with_temp_dir (fun dir ->
+    let date = Date.of_string "2026-10-12" in
+    let%bind (_ : Market_data.Rebuild_norm.Stats.t) =
+      Market_data.Rebuild_norm.run
+        ~normalizers:[ (module Hl_client.Raw_normalizer) ]
+        ~data_dir:"fixtures"
+        ~out_dir:dir
+        date
+      >>| ok_exn
+    in
+    let%bind from_raw, _, _ = run_anchored raw_source in
+    let%map from_norm, _, anchoring =
+      run_anchored (fun spec ->
+        Anchoring.norm_source ~dir ~from:date ~to_:date spec >>| ok_exn)
+    in
+    print_s
+      [%message
+        ""
+          ~events:((Price_anchor.Anchor.stats (Anchoring.anchor anchoring)).events : int)
+          ~same_state:(Sexp.equal (state from_raw) (state from_norm) : bool)];
+    [%expect {| ((events 64) (same_state true)) |}])
 ;;
