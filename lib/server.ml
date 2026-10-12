@@ -52,6 +52,7 @@ type t =
   ; mutable l2_flush_scheduled : bool
   ; journal : Journal.t option
   ; day_stats : Active_asset_ctx.Day_stats.t
+  ; mutable on_clock_step : (now:int -> unit) list
   }
 
 let wall_clock () = Time_ns.now () |> Time_ns.to_int_ns_since_epoch
@@ -61,8 +62,12 @@ let num_ws_dropped t = t.num_ws_dropped
 
 let step_clock t =
   let now = t.now () in
-  if now > Exchange.now t.exchange then Exchange.step t.exchange ~now
+  if now > Exchange.now t.exchange then Exchange.step t.exchange ~now;
+  let now = Exchange.now t.exchange in
+  List.iter t.on_clock_step ~f:(fun f -> f ~now)
 ;;
+
+let on_clock_step t f = t.on_clock_step <- t.on_clock_step @ [ f ]
 
 let create ?(config = Config.default) ?(now = wall_clock) ?journal exchange =
   let t =
@@ -77,6 +82,7 @@ let create ?(config = Config.default) ?(now = wall_clock) ?journal exchange =
     ; l2_flush_scheduled = false
     ; journal
     ; day_stats = Active_asset_ctx.Day_stats.create ()
+    ; on_clock_step = []
     }
   in
   step_clock t;
@@ -231,6 +237,8 @@ let mutate t ~f =
   publish t;
   result
 ;;
+
+let publish_events t = publish t
 
 (* Request handlers *)
 

@@ -74,6 +74,16 @@ val ensure_account : t -> Address.t -> unit
     it produced. *)
 val mutate : t -> f:(Exchange.t -> 'a) -> 'a
 
+(** [on_clock_step t f] calls [f ~now] every time {!mutate} (and the periodic clock step)
+    has brought the exchange clock up to date, before the mutation itself; [now] is the
+    exchange clock, which may be ahead of [now ()] when something else (a price anchor
+    replaying recorded data) stepped it. Hooks run in the order they were added. *)
+val on_clock_step : t -> (now:int -> unit) -> unit
+
+(** Logs and publishes the events the exchange produced outside {!mutate} (for example by
+    a price anchor acting on it directly). *)
+val publish_events : t -> unit
+
 (** {2 Request handlers}
     (exposed for tests; the HTTP server calls these) *)
 
