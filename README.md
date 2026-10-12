@@ -146,6 +146,27 @@ Inside a dune workspace that also contains `hl-protocol`, `fixed-decimal`,
 `order-book` and `exchange-core`, dune uses the sibling sources and the pins are not
 needed.
 
+### CI and the dune cache
+
+CI time is dominated by building the opam dependencies (Core, Async, cohttp and the
+rest from source, about 15 minutes); `dune build` and `dune test` of this repo take
+about 15 seconds. Enabling setup-ocaml's dune cache was measured on 2026-10-12 and
+dropped again:
+
+| Run | Compiler setup | `opam install --deps-only` | Total |
+| --- | --- | --- | --- |
+| before (no dune cache, two runs) | 36-43s | 948-954s | 17 min |
+| `dune-cache: true`, cold | 144s | 881s | 19 min |
+| `dune-cache: true`, cache restored | 146s | 855s | 17 min |
+| also `opam-disable-sandboxing: true`, cold | 1165s (new switch cache key) | 884s | 34 min |
+| same, cache restored | 145s | 859s (failed on a download) | - |
+
+The saved dune cache was 479 bytes: dependency builds run by opam do not store
+anything in it, so the restored cache saves nothing, and setup itself gets about 100s
+slower (it installs dune into the switch). The input is also deprecated in
+setup-ocaml v3. The time worth saving is in the dependencies, which would need the
+opam switch itself cached after `opam install` (keyed on the sibling pins' commits).
+
 ## Modules
 
 All modules live under `Hl_sim`. The engine (`Exchange`, `Clearinghouse`, `Position`,
