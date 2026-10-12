@@ -145,6 +145,13 @@ let command =
          "-anchor-size-factor"
          (optional_with_default 1. float)
          ~doc:"F multiply reference sizes by F (default 1)"
+     and input_journal =
+       flag
+         "-input-journal"
+         (optional string)
+         ~doc:
+           "FILE write every engine input (client requests, noise traders, anchors) to \
+            FILE, a binary journal that replays the whole run"
      and log_level =
        flag
          "-log-level"
@@ -155,6 +162,14 @@ let command =
        Log.Global.set_output [ Log.Output.stderr () ];
        Log.Global.set_level log_level;
        let exchange = Adapt.create_exchange () in
+       Option.iter input_journal ~f:(fun path ->
+         let journal = Exchange_core_engine.Journal.create path in
+         Exchange_core_engine.Journal.attach journal exchange;
+         Clock_ns.every (Time_ns.Span.of_sec 1.) (fun () ->
+           Exchange_core_engine.Journal.flush journal);
+         Shutdown.at_shutdown (fun () ->
+           Exchange_core_engine.Journal.close journal;
+           return ()));
        let%bind journal =
          match journal with
          | None -> return None
