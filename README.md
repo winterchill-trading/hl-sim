@@ -115,6 +115,11 @@ snapshot after changes to that book, at most every 50ms. `userFills` starts with
 `isSnapshot: true` message; `allMids` starts with a snapshot and repeats every second.
 `trades`, `orderUpdates` and `userFills` are pushed as events happen.
 
+Each connection may have at most 10,000 messages waiting to be written
+(`Config.max_ws_queue`). A subscriber that stops reading falls behind once its socket
+buffers fill, and is then disconnected instead of being buffered without bound; other
+clients are not slowed down.
+
 ## Build
 
 ```sh
