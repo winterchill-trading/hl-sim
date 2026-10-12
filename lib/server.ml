@@ -53,6 +53,7 @@ type t =
   ; journal : Journal.t option
   ; day_stats : Active_asset_ctx.Day_stats.t
   ; mutable on_clock_step : (now:int -> unit) list
+  ; mutable status : (string * (unit -> Yojson.Safe.t)) list
   }
 
 let wall_clock () = Time_ns.now () |> Time_ns.to_int_ns_since_epoch
@@ -68,6 +69,15 @@ let step_clock t =
 ;;
 
 let on_clock_step t f = t.on_clock_step <- t.on_clock_step @ [ f ]
+let add_status t ~name f = t.status <- t.status @ [ name, f ]
+
+let status t : Yojson.Safe.t =
+  `Assoc
+    ([ "ws_connections", `Int (Hashtbl.length t.conns)
+     ; "ws_dropped", `Int t.num_ws_dropped
+     ]
+     @ List.map t.status ~f:(fun (name, f) -> name, f ()))
+;;
 
 let create ?(config = Config.default) ?(now = wall_clock) ?journal exchange =
   let t =
@@ -83,6 +93,7 @@ let create ?(config = Config.default) ?(now = wall_clock) ?journal exchange =
     ; journal
     ; day_stats = Active_asset_ctx.Day_stats.create ()
     ; on_clock_step = []
+    ; status = []
     }
   in
   step_clock t;
@@ -469,6 +480,7 @@ let handler t ~body _addr req =
       else return ()
     in
     response
+  | `GET, "/status" -> respond_json (status t)
   | `GET, ("/ws" | "/") when header_is req "upgrade" "websocket" -> ws_upgrade t req
   | _, path -> respond_error `Not_found (sprintf "no route for %s" path)
 ;;

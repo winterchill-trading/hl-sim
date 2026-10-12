@@ -14,6 +14,8 @@
       [activeAssetCtx] channel ({!Active_asset_ctx}), sent on subscribe and with every
       [allMids] broadcast.
 
+    - [GET /status]: {!status}.
+
     Malformed requests get status 400 and [{"error": "..."}].
 
     Every address the server sees (as an acting address, an info [user] or a websocket
@@ -79,6 +81,13 @@ val mutate : t -> f:(Exchange.t -> 'a) -> 'a
     exchange clock, which may be ahead of [now ()] when something else (a price anchor
     replaying recorded data) stepped it. Hooks run in the order they were added. *)
 val on_clock_step : t -> (now:int -> unit) -> unit
+
+(** [add_status t ~name f] adds [name: f ()] to {!status}. *)
+val add_status : t -> name:string -> (unit -> Yojson.Safe.t) -> unit
+
+(** [{"ws_connections": n, "ws_dropped": n, ...}] and the entries of {!add_status}, in the
+    order they were added; served on [GET /status]. *)
+val status : t -> Yojson.Safe.t
 
 (** Logs and publishes the events the exchange produced outside {!mutate} (for example by
     a price anchor acting on it directly). *)
