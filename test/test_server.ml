@@ -184,3 +184,78 @@ let%expect_test "-response-delay-ms delays the ack, not the order" =
     Pipe.close outgoing;
     return ())
 ;;
+
+let%expect_test "websocket activeAssetCtx subscription" =
+  with_server (fun port ->
+    let%bind incoming, outgoing = ws_connect port in
+    [%expect
+      {|
+      HTTP/1.1 101 Switching Protocols
+      upgrade: websocket
+      connection: Upgrade
+      sec-websocket-accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+      |}];
+    let subscribe ?(meth = "subscribe") coin =
+      Pipe.write_without_pushback
+        outgoing
+        (sprintf
+           {|{"method":"%s","subscription":{"type":"activeAssetCtx","coin":"%s"}}|}
+           meth
+           coin)
+    in
+    (* Before any trade there is no price, so only the echo comes back. *)
+    subscribe "ETH";
+    let%bind () = receive incoming in
+    [%expect
+      {| {"channel":"subscriptionResponse","data":{"method":"subscribe","subscription":{"type":"activeAssetCtx","coin":"ETH"}}} |}];
+    let%bind () =
+      post
+        port
+        "/exchange"
+        ~headers:[ "X-Address", mm ]
+        (order ~is_buy:false ~px:"100000" ~sz:"0.002")
+    in
+    let%bind () = post port "/exchange" (order ~is_buy:true ~px:"100000" ~sz:"0.001") in
+    [%expect
+      {|
+      200 {"status":"ok","response":{"type":"order","data":{"statuses":[{"resting":{"oid":1}}]}}}
+      200 {"status":"ok","response":{"type":"order","data":{"statuses":[{"filled":{"totalSz":"0.001","avgPx":"100000","oid":2}}]}}}
+      |}];
+    subscribe "BTC";
+    let%bind () = receive incoming in
+    let%bind ctx = Pipe.read_exn incoming in
+    print_endline ctx;
+    [%expect
+      {|
+      {"channel":"subscriptionResponse","data":{"method":"subscribe","subscription":{"type":"activeAssetCtx","coin":"BTC"}}}
+      {"channel":"activeAssetCtx","data":{"coin":"BTC","ctx":{"funding":"0.0000125","openInterest":"0.001","prevDayPx":"100000","dayNtlVlm":"100","premium":"0.0","oraclePx":"100000","markPx":"100000","midPx":null,"dayBaseVlm":"0.001"}}}
+      |}];
+    (* hl-protocol decodes it as an [Unknown] channel; hl-client takes [funding], [markPx]
+       and [oraclePx] from its [data]. *)
+    (match Ws_message.t_of_yojson (Yojson.Safe.from_string ctx) with
+     | Unknown { channel; data } ->
+       let ctx = Yojson.Safe.Util.member "ctx" data in
+       print_s
+         [%message
+           channel
+             ~funding:
+               (Float.of_string Yojson.Safe.Util.(to_string (member "funding" ctx))
+                : float)
+             ~mark:
+               (Price.of_string Yojson.Safe.Util.(to_string (member "markPx" ctx))
+                : Price.t)
+             ~oracle:
+               (Price.of_string Yojson.Safe.Util.(to_string (member "oraclePx" ctx))
+                : Price.t)]
+     | msg -> print_s [%message "unexpected" (msg : Ws_message.t)]);
+    [%expect {| (activeAssetCtx (funding 1.25E-05) (mark 100000) (oracle 100000)) |}];
+    subscribe ~meth:"unsubscribe" "BTC";
+    let%bind () = receive incoming in
+    [%expect
+      {| {"channel":"subscriptionResponse","data":{"method":"unsubscribe","subscription":{"type":"activeAssetCtx","coin":"BTC"}}} |}];
+    Pipe.write_without_pushback outgoing {|{"method":"ping"}|};
+    let%bind () = receive incoming in
+    [%expect {| {"channel":"pong"} |}];
+    Pipe.close outgoing;
+    return ())
+;;
