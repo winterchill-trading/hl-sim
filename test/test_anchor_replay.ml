@@ -85,7 +85,26 @@ let%expect_test "an anchored run replays from its journal" =
   print_endline
     (Yojson.Safe.pretty_to_string
        (Anchoring.Status.yojson_of_t (Anchoring.status anchoring)));
-  [%expect {| |}];
+  [%expect {|
+    {
+      "anchor": "hyperliquid:BTC=BTC",
+      "fresh": true,
+      "stale_reason": null,
+      "went_stale": 3,
+      "stale_seconds": 3.190931,
+      "gaps": 0,
+      "events": 64,
+      "marks_set": 6,
+      "funding_rates_set": 4,
+      "reference_price": "82493",
+      "shadow_levels": 10,
+      "shadow_placed": 66,
+      "shadow_skipped": 5,
+      "shadow_consumed": 0,
+      "replay_fills": 2,
+      "replays_rejected": 0
+    }
+    |}];
   let journal = Engine_journal.to_string (Queue.to_list inputs) in
   let replayed =
     Engine_journal.replay
