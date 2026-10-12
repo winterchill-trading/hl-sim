@@ -51,7 +51,8 @@ val supported_venues : Market_data.Venue.t list
 val normalizer : Market_data.Venue.t -> Market_data.Normalizer.t Or_error.t
 
 (** A live source: the reference venue's read-only [Live_feed] (trades, L2, funding),
-    against the venue's mainnet unless [base_url] is given. *)
+    against the venue's mainnet unless [base_url] is given. Closing the source closes the
+    feed. *)
 val live_source : ?base_url:Uri.t -> Spec.t -> Price_anchor.Source.t Or_error.t Deferred.t
 
 (** The reference's raw minute files under [dir] with [recv_ts] in [[from, to_)]. *)

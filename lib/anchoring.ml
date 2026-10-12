@@ -78,6 +78,13 @@ let normalizer (venue : Market_data.Venue.t) : Market_data.Normalizer.t Or_error
 let streams : Market_data.Stream.t list = [ Trades; L2; Funding ]
 let symbol (spec : Spec.t) = Market_data.Symbol.to_string spec.reference.symbol
 
+(* Closing the source (from the reader's side) closes the feed and its connections. *)
+let source_of_feed ((module F : Market_data.Feed.S) as feed) =
+  let source = Source.of_feed feed in
+  upon (Pipe.closed source) (fun () -> don't_wait_for (F.close ()));
+  source
+;;
+
 let live_source ?base_url (spec : Spec.t) =
   match spec.reference.venue with
   | Hyperliquid ->
@@ -88,7 +95,7 @@ let live_source ?base_url (spec : Spec.t) =
     in
     Monitor.try_with_or_error (fun () ->
       Hl_client.Live_feed.create config ~symbols:[ symbol spec ] ~streams)
-    >>|? Source.of_feed
+    >>|? source_of_feed
   | Binance ->
     let config =
       match base_url with
@@ -97,7 +104,7 @@ let live_source ?base_url (spec : Spec.t) =
     in
     Monitor.try_with_or_error (fun () ->
       Binance_client.Live_feed.create config ~symbols:[ symbol spec ] ~streams)
-    >>|? Source.of_feed
+    >>|? source_of_feed
   | venue -> return (unsupported venue)
 ;;
 
