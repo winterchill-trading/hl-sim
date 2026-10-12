@@ -28,6 +28,7 @@ dune exec hl-sim -- -port 3000
 | `-coins` | all | comma-separated coins the noise traders trade |
 | `-noise-traders` | 10 | noise trader accounts; 0 disables the market simulation |
 | `-initial-balance` | 1000000 | USD credited to any address on first use |
+| `-journal` | none | append every accepted `/exchange` request to this file (JSON lines) |
 | `-log-level` | info | `debug`, `info`, `warn` or `error` |
 
 Logs go to stderr: fills and liquidations at `info`, every event, request detail and
@@ -79,6 +80,20 @@ curl -s localhost:3000/exchange -H 'X-Address: 0x0000000000000000000000000000000
 Supported actions: `order`, `cancel`, `cancelByCloid`, `modify`. Malformed bodies get
 status 400 and `{"error": "..."}`.
 
+### Journal and replay
+
+With `-journal FILE` every `/exchange` request that decodes is appended to `FILE`, one
+JSON object per line, before it is applied:
+
+```json
+{"time":1700000000000000000,"address":"0x...","request":{"action":{...},"nonce":1}}
+```
+
+`time` is the exchange clock in nanoseconds. `Journal.load` reads the file back and
+`Server.replay` applies the entries to a fresh exchange, stepping the clock to each
+entry's time, which reproduces the original responses, fills and account state as long
+as nothing else traded (run with `-noise-traders 0`).
+
 ### Websocket
 
 The websocket is served on the same port at `/ws`:
@@ -126,6 +141,7 @@ are in the [exchange-core README](https://github.com/winterchill-trading/exchang
 | Module | Description |
 | --- | --- |
 | `Adapt` | Hyperliquid view of the engine: default universe, instruments with Hyperliquid's price and size rules, asset index mapping, the exchange and info endpoints in hl-protocol types, error wording, `User_fill` with `dir` labels, `Trade`, `Order_update`, `Clearinghouse_state` |
+| `Journal` | JSON-lines journal of accepted `/exchange` requests, for replay |
 | `Server` | cohttp-async server for `/info`, `/exchange` and the `/ws` websocket (async_websocket); owns the engine and drives its market simulation |
 
 ## Hyperliquid specifics
