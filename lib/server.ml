@@ -13,6 +13,7 @@ module Config = struct
     ; all_mids_interval : Time_ns.Span.t
     ; step_interval : Time_ns.Span.t
     ; response_delay : Time_ns.Span.t
+    ; max_ws_queue : int
     }
   [@@deriving sexp_of]
 
@@ -23,6 +24,7 @@ module Config = struct
     ; all_mids_interval = Time_ns.Span.second
     ; step_interval = Time_ns.Span.second
     ; response_delay = Time_ns.Span.zero
+    ; max_ws_queue = 10_000
     }
   ;;
 end
@@ -31,6 +33,8 @@ module Conn = struct
   type t =
     { id : int
     ; send : string Pipe.Writer.t
+    ; max_queue : int
+    ; disconnect : unit -> unit
     ; mutable subs : Subscription.Set.t
     }
 end
@@ -90,9 +94,16 @@ let ensure_account t address =
 
 let encode_ws msg = Yojson.Safe.to_string (Ws_message.yojson_of_t msg)
 
-let send (conn : Conn.t) msg =
-  Pipe.write_without_pushback_if_open conn.send (encode_ws msg)
+(* A subscriber that does not read lets its queue grow (async_websocket writes the next
+   batch only once the socket has taken the previous one); past [max_queue] messages it is
+   disconnected rather than buffered without bound. *)
+let send_text (conn : Conn.t) text =
+  if Pipe.length conn.send >= conn.max_queue
+  then conn.disconnect ()
+  else Pipe.write_without_pushback_if_open conn.send text
 ;;
+
+let send conn msg = send_text conn (encode_ws msg)
 
 let broadcast t sub msg =
   let subscribers =
@@ -101,7 +112,7 @@ let broadcast t sub msg =
   if not (List.is_empty subscribers)
   then (
     let text = encode_ws msg in
-    List.iter subscribers ~f:(fun c -> Pipe.write_without_pushback_if_open c.send text))
+    List.iter subscribers ~f:(fun c -> send_text c text))
 ;;
 
 let flush_l2 t =
@@ -286,7 +297,26 @@ let handle_ws t reader writer =
   let incoming, outgoing = Websocket.pipes ws in
   let id = t.next_conn_id in
   t.next_conn_id <- id + 1;
-  let conn = { Conn.id; send = outgoing; subs = Subscription.Set.empty } in
+  let disconnect () =
+    if Hashtbl.mem t.conns id
+    then (
+      Hashtbl.remove t.conns id;
+      Log.Global.info
+        "ws %d: disconnected slow consumer (%d messages queued)"
+        id
+        (Pipe.length outgoing);
+      Pipe.close outgoing;
+      (* The close frame would wait behind the unread data; drop the socket now. *)
+      don't_wait_for (Writer.close ~force_close:Deferred.unit writer))
+  in
+  let conn =
+    { Conn.id
+    ; send = outgoing
+    ; max_queue = t.config.max_ws_queue
+    ; disconnect
+    ; subs = Subscription.Set.empty
+    }
+  in
   Hashtbl.set t.conns ~key:id ~data:conn;
   Log.Global.debug "ws %d: connected" id;
   let%map () = Pipe.iter_without_pushback incoming ~f:(handle_ws_message t conn) in

@@ -39,11 +39,14 @@ module Config : sig
     ; response_delay : Time_ns.Span.t
     (** delay of every [POST /exchange] response; the request takes effect (and its
         websocket events go out) at once, only the ack is late *)
+    ; max_ws_queue : int
+    (** messages a websocket subscriber may have waiting to be sent; a subscriber that
+        falls further behind (stops reading) is disconnected *)
     }
   [@@deriving sexp_of]
 
   (** $1,000,000, address [0x0000000000000000000000000000000000000001], 50ms, 1s, 1s, no
-      response delay. *)
+      response delay, 10,000 queued websocket messages. *)
   val default : t
 end
 
