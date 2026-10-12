@@ -36,6 +36,7 @@ module Conn = struct
     ; max_queue : int
     ; disconnect : unit -> unit
     ; mutable subs : Subscription.Set.t
+    ; mutable ctx_coins : Coin.Set.t (** [activeAssetCtx] subscriptions *)
     }
 end
 
@@ -49,6 +50,7 @@ type t =
   ; dirty_books : Coin.Hash_set.t
   ; mutable l2_flush_scheduled : bool
   ; journal : Journal.t option
+  ; day_stats : Active_asset_ctx.Day_stats.t
   }
 
 let wall_clock () = Time_ns.now () |> Time_ns.to_int_ns_since_epoch
@@ -71,6 +73,7 @@ let create ?(config = Config.default) ?(now = wall_clock) ?journal exchange =
     ; dirty_books = Coin.Hash_set.create ()
     ; l2_flush_scheduled = false
     ; journal
+    ; day_stats = Active_asset_ctx.Day_stats.create ()
     }
   in
   step_clock t;
@@ -113,6 +116,27 @@ let broadcast t sub msg =
   then (
     let text = encode_ws msg in
     List.iter subscribers ~f:(fun c -> send_text c text))
+;;
+
+let send_json conn json = send_text conn (Yojson.Safe.to_string json)
+
+let send_ctx t conn coin =
+  Option.iter (Active_asset_ctx.of_exchange t.exchange t.day_stats coin) ~f:(fun ctx ->
+    send_json conn (Active_asset_ctx.to_ws_message ctx))
+;;
+
+(* One [activeAssetCtx] message per subscribed coin, encoded once. *)
+let broadcast_ctx t =
+  let conns = Hashtbl.data t.conns in
+  let coins =
+    List.fold conns ~init:Coin.Set.empty ~f:(fun acc (c : Conn.t) ->
+      Set.union acc c.ctx_coins)
+  in
+  Set.iter coins ~f:(fun coin ->
+    Option.iter (Active_asset_ctx.of_exchange t.exchange t.day_stats coin) ~f:(fun ctx ->
+      let text = Yojson.Safe.to_string (Active_asset_ctx.to_ws_message ctx) in
+      List.iter conns ~f:(fun (c : Conn.t) ->
+        if Set.mem c.ctx_coins coin then send_text c text)))
 ;;
 
 let flush_l2 t =
@@ -171,6 +195,12 @@ let publish t =
         in
         match event with
         | Fill { fill; taker; maker } ->
+          Active_asset_ctx.Day_stats.record_trade
+            t.day_stats
+            ~coin:fill.symbol
+            ~px:fill.px
+            ~sz:fill.sz
+            ~time:fill.time;
           let user_fill settlement = Adapt.user_fill { fill; settlement } in
           ( Map.add_multi trades ~key:fill.symbol ~data:(Adapt.trade fill)
           , Map.add_multi
@@ -275,19 +305,39 @@ let ws_snapshot t conn (sub : Subscription.t) =
   | Trades _ -> ()
 ;;
 
+let handle_ctx_request t (conn : Conn.t) (req : Active_asset_ctx.Request.t) =
+  Log.Global.debug_s
+    [%message
+      "ws activeAssetCtx" ~conn:(conn.id : int) (req : Active_asset_ctx.Request.t)];
+  conn.ctx_coins
+  <- (if req.subscribe
+      then Set.add conn.ctx_coins req.coin
+      else Set.remove conn.ctx_coins req.coin);
+  send_json conn (Active_asset_ctx.Request.response req);
+  if req.subscribe then send_ctx t conn req.coin
+;;
+
+let decode_ws_request text =
+  let json = Yojson.Safe.from_string text in
+  match Active_asset_ctx.Request.of_json json with
+  | Some req -> `Ctx req
+  | None -> `Request (Ws_request.t_of_yojson json)
+;;
+
 let handle_ws_message t (conn : Conn.t) text =
-  match Ws_request.t_of_yojson (Yojson.Safe.from_string text) with
+  match decode_ws_request text with
+  | `Ctx req -> handle_ctx_request t conn req
   | exception _ ->
     Log.Global.debug "ws %d: invalid message %s" conn.id text;
     send conn (Error (sprintf "Invalid message: %s" text))
-  | Ping -> send conn Pong
-  | Subscribe sub as req ->
+  | `Request Ping -> send conn Pong
+  | `Request (Subscribe sub as req) ->
     Log.Global.debug_s
       [%message "ws subscribe" ~conn:(conn.id : int) (sub : Subscription.t)];
     conn.subs <- Set.add conn.subs sub;
     send conn (Subscription_response req);
     ws_snapshot t conn sub
-  | Unsubscribe sub as req ->
+  | `Request (Unsubscribe sub as req) ->
     conn.subs <- Set.remove conn.subs sub;
     send conn (Subscription_response req)
 ;;
@@ -315,6 +365,7 @@ let handle_ws t reader writer =
     ; max_queue = t.config.max_ws_queue
     ; disconnect
     ; subs = Subscription.Set.empty
+    ; ctx_coins = Coin.Set.empty
     }
   in
   Hashtbl.set t.conns ~key:id ~data:conn;
@@ -422,7 +473,8 @@ let port server = Cohttp_async.Server.listening_on server
 
 let start_periodic t =
   Clock_ns.every t.config.all_mids_interval (fun () ->
-    broadcast t All_mids (All_mids (Adapt.all_mids t.exchange)));
+    broadcast t All_mids (All_mids (Adapt.all_mids t.exchange));
+    broadcast_ctx t);
   Clock_ns.every t.config.step_interval (fun () -> mutate t ~f:ignore)
 ;;
 

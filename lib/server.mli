@@ -10,7 +10,9 @@
       is the [X-Address] header if present, else the request's [vaultAddress], else
       [Config.default_address].
     - [GET /ws] with [Upgrade: websocket]: Hyperliquid's websocket protocol
-      ({!Hl_protocol.Ws_request.t} in, {!Hl_protocol.Ws_message.t} out).
+      ({!Hl_protocol.Ws_request.t} in, {!Hl_protocol.Ws_message.t} out), plus the
+      [activeAssetCtx] channel ({!Active_asset_ctx}), sent on subscribe and with every
+      [allMids] broadcast.
 
     Malformed requests get status 400 and [{"error": "..."}].
 
@@ -99,7 +101,7 @@ val listen
 (** The port the server is bound to. *)
 val port : (Socket.Address.Inet.t, int) Cohttp_async.Server.t -> int
 
-(** Starts the periodic tasks: [allMids] broadcasts and clock steps. *)
+(** Starts the periodic tasks: [allMids] and [activeAssetCtx] broadcasts and clock steps. *)
 val start_periodic : t -> unit
 
 (** Calls {!Exchange_core_engine.Market_sim.tick} every [tick_interval] through {!mutate},
