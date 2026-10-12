@@ -89,7 +89,7 @@ let order_body =
 let after span = Time_ns.add (Time_ns.now ()) span
 
 (* Floods a non-reading subscriber with snapshots while another client places an order.
-   Prints whether the slow subscriber got disconnected and returns the other client's ack
+   Prints whether the slow subscriber got dropped and returns the other client's ack
    latency. *)
 let flood ~max_ws_queue ~wait =
   Log.Global.set_output [];
@@ -109,18 +109,17 @@ let flood ~max_ws_queue ~wait =
       slow
       {|{"method":"subscribe","subscription":{"type":"l2Book","coin":"BTC"}}|}
   done;
-  let%bind connected =
-    wait_until
-      ~deadline:(after (Time_ns.Span.of_sec 2.))
-      (fun () -> Server.num_ws_connections server > 0)
-  in
   let started = Time_ns.now () in
   let%bind status, _ = post port order_body in
   let ack = Time_ns.diff (Time_ns.now ()) started in
-  let%bind disconnected =
-    wait_until ~deadline:(after wait) (fun () -> Server.num_ws_connections server = 0)
+  let%bind (_ : bool) =
+    wait_until ~deadline:(after wait) (fun () -> Server.num_ws_dropped server > 0)
   in
-  print_s [%message (connected : bool) (status : int) (disconnected : bool)];
+  print_s
+    [%message
+      (status : int)
+        ~dropped:(Server.num_ws_dropped server : int)
+        ~open_connections:(Server.num_ws_connections server : int)];
   Pipe.close slow;
   let%map () = Cohttp_async.Server.close http in
   ack
@@ -128,7 +127,7 @@ let flood ~max_ws_queue ~wait =
 
 let%expect_test "a subscriber that never reads is disconnected" =
   let%bind ack = flood ~max_ws_queue:200 ~wait:(Time_ns.Span.of_sec 3.) in
-  [%expect {| ((connected true) (status 200) (disconnected true)) |}];
+  [%expect {| ((status 200) (dropped 1) (open_connections 0)) |}];
   (* About 15-30ms on a laptop; the bound leaves room for slow CI machines. *)
   print_s [%message "" ~ack_under_500ms:(Time_ns.Span.(ack < of_int_ms 500) : bool)];
   [%expect {| (ack_under_500ms true) |}];
@@ -137,7 +136,7 @@ let%expect_test "a subscriber that never reads is disconnected" =
 
 let%expect_test "without a bound the slow subscriber stays connected" =
   let%bind ack = flood ~max_ws_queue:Int.max_value ~wait:Time_ns.Span.second in
-  [%expect {| ((connected true) (status 200) (disconnected false)) |}];
+  [%expect {| ((status 200) (dropped 0) (open_connections 1)) |}];
   ignore (ack : Time_ns.Span.t);
   return ()
 ;;
