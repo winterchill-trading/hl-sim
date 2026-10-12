@@ -28,4 +28,5 @@
   exchange-core-engine
   hl-protocol
   order-book
-  ppx_jane))
+  ppx_jane
+  ppx_yojson_conv))

@@ -11,6 +11,7 @@ depends: [
   "core_unix"
   "async"
   "cohttp-async"
+  "http"
   "async_websocket"
   "uri"
   "yojson"
@@ -20,6 +21,7 @@ depends: [
   "hl-protocol"
   "order-book"
   "ppx_jane"
+  "ppx_yojson_conv"
   "odoc" {with-doc}
 ]
 build: [
