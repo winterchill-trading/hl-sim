@@ -13,7 +13,11 @@
   exchange-core-engine
   http
   hl-protocol
+  hl-client
+  binance-client
+  market-data
   order-book
+  price-anchor
   ppx_yojson_conv_lib
   uri
   yojson)

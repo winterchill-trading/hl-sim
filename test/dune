@@ -11,6 +11,9 @@
   core
   exchange-core
   exchange-core-engine
+  expect_test_helpers_core
+  market-data
+  price-anchor
   hl-protocol
   hl-sim
   order-book
