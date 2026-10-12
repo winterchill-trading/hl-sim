@@ -110,3 +110,6 @@ val run_market_sim : t -> Exchange_core_engine.Market_sim.t -> unit
 
 (** Number of open websocket connections. *)
 val num_ws_connections : t -> int
+
+(** Number of websocket connections dropped for falling behind ({!Config.t.max_ws_queue}). *)
+val num_ws_dropped : t -> int

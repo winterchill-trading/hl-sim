@@ -47,6 +47,7 @@ type t =
   ; seen : Address.Hash_set.t
   ; conns : Conn.t Int.Table.t
   ; mutable next_conn_id : int
+  ; mutable num_ws_dropped : int
   ; dirty_books : Coin.Hash_set.t
   ; mutable l2_flush_scheduled : bool
   ; journal : Journal.t option
@@ -56,6 +57,7 @@ type t =
 let wall_clock () = Time_ns.now () |> Time_ns.to_int_ns_since_epoch
 let config t = t.config
 let num_ws_connections t = Hashtbl.length t.conns
+let num_ws_dropped t = t.num_ws_dropped
 
 let step_clock t =
   let now = t.now () in
@@ -70,6 +72,7 @@ let create ?(config = Config.default) ?(now = wall_clock) ?journal exchange =
     ; seen = Address.Hash_set.create ()
     ; conns = Int.Table.create ()
     ; next_conn_id = 0
+    ; num_ws_dropped = 0
     ; dirty_books = Coin.Hash_set.create ()
     ; l2_flush_scheduled = false
     ; journal
@@ -351,6 +354,7 @@ let handle_ws t reader writer =
     if Hashtbl.mem t.conns id
     then (
       Hashtbl.remove t.conns id;
+      t.num_ws_dropped <- t.num_ws_dropped + 1;
       Log.Global.info
         "ws %d: disconnected slow consumer (%d messages queued)"
         id
