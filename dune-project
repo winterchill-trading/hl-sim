@@ -23,6 +23,8 @@
   uri
   yojson
   fixed-decimal
+  exchange-core
+  exchange-core-engine
   hl-protocol
   order-book
   ppx_jane))

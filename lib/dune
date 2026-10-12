@@ -9,6 +9,8 @@
   core
   core_unix
   fixed-decimal
+  exchange-core
+  exchange-core-engine
   http
   hl-protocol
   order-book

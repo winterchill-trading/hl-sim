@@ -4,6 +4,13 @@
 (executable
  (name main)
  (public_name hl-sim)
- (libraries async core core_unix.command_unix hl-protocol hl-sim)
+ (libraries
+  async
+  core
+  core_unix.command_unix
+  exchange-core
+  exchange-core-engine
+  hl-protocol
+  hl-sim)
  (preprocess
   (pps ppx_jane)))
