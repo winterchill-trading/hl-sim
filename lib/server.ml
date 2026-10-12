@@ -12,6 +12,7 @@ module Config = struct
     ; l2_book_interval : Time_ns.Span.t
     ; all_mids_interval : Time_ns.Span.t
     ; step_interval : Time_ns.Span.t
+    ; response_delay : Time_ns.Span.t
     }
   [@@deriving sexp_of]
 
@@ -21,6 +22,7 @@ module Config = struct
     ; l2_book_interval = Time_ns.Span.of_int_ms 50
     ; all_mids_interval = Time_ns.Span.second
     ; step_interval = Time_ns.Span.second
+    ; response_delay = Time_ns.Span.zero
     }
   ;;
 end
@@ -363,9 +365,17 @@ let handler t ~body _addr req =
   match Cohttp.Request.meth req, Uri.path (Cohttp.Request.uri req) with
   | `POST, "/info" -> with_body body ~decode:Info_request.t_of_yojson ~f:(handle_info t)
   | `POST, "/exchange" ->
-    with_body body ~decode:Exchange_request.t_of_yojson ~f:(fun exchange_req ->
-      let address = acting_address t req exchange_req in
-      handle_exchange t address exchange_req |> Exchange_response.yojson_of_t)
+    let%bind response =
+      with_body body ~decode:Exchange_request.t_of_yojson ~f:(fun exchange_req ->
+        let address = acting_address t req exchange_req in
+        handle_exchange t address exchange_req |> Exchange_response.yojson_of_t)
+    in
+    let%map () =
+      if Time_ns.Span.(t.config.response_delay > zero)
+      then Clock_ns.after t.config.response_delay
+      else return ()
+    in
+    response
   | `GET, ("/ws" | "/") when header_is req "upgrade" "websocket" -> ws_upgrade t req
   | _, path -> respond_error `Not_found (sprintf "no route for %s" path)
 ;;

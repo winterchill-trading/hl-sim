@@ -36,10 +36,14 @@ module Config : sig
     ; all_mids_interval : Time_ns.Span.t (** period of [allMids] broadcasts *)
     ; step_interval : Time_ns.Span.t
     (** period of the clock step that charges funding and liquidates *)
+    ; response_delay : Time_ns.Span.t
+    (** delay of every [POST /exchange] response; the request takes effect (and its
+        websocket events go out) at once, only the ack is late *)
     }
   [@@deriving sexp_of]
 
-  (** $1,000,000, address [0x0000000000000000000000000000000000000001], 50ms, 1s, 1s. *)
+  (** $1,000,000, address [0x0000000000000000000000000000000000000001], 50ms, 1s, 1s, no
+      response delay. *)
   val default : t
 end
 
