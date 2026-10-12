@@ -28,5 +28,9 @@
   exchange-core-engine
   hl-protocol
   order-book
+  market-data
+  price-anchor
+  hl-client
+  binance-client
   ppx_jane
   ppx_yojson_conv))
