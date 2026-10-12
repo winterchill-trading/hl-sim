@@ -38,6 +38,11 @@ let command =
             (Usd.to_string Server.Config.default.initial_balance)
             string)
          ~doc:"USD balance credited to any address on first use"
+     and response_delay_ms =
+       flag
+         "-response-delay-ms"
+         (optional_with_default 0 int)
+         ~doc:"MS delay every /exchange response (the order still takes effect at once)"
      and journal =
        flag
          "-journal"
@@ -64,6 +69,7 @@ let command =
            ~config:
              { Server.Config.default with
                initial_balance = Usd.of_string initial_balance
+             ; response_delay = Time_ns.Span.of_int_ms response_delay_ms
              }
            exchange
        in
