@@ -47,6 +47,7 @@ dune exec hl-sim -- -port 3000
 | `-leaders` | 0 | leader accounts for copy trading (see [Copy trading](#copy-trading)) |
 | `-leaders-seed` | `-seed` | seed of the leaders' parameters |
 | `-leader-balance` | 100000 | USD deposited into each leader |
+| `-leader-edge-s` | 60 | trend and mean-reversion leaders see the reference this far ahead (see [Copy trading](#copy-trading)) |
 | `-strict-signatures` | off | every `/exchange` request must be signed; `X-Address` is ignored |
 | `-mainnet-signatures` | off | with `-strict-signatures`, check the mainnet L1 signing domain |
 | `-log-level` | info | `debug`, `info`, `warn` or `error` |
@@ -283,6 +284,41 @@ leverage and averaging lengths drawn from `-leaders-seed`. Same flags, same lead
 need prices, so run them with the market simulation or an anchor. On the leaderboard
 they are named `trend-0`, `mean-reversion-1`, ... and the noise traders `noise-<i>`.
 
+**Leader edge.** On thin noise books, fees (4.5 bp taker) and slippage beat every plain
+strategy, so the leaderboard would only have losers. `-leader-edge-s S` (default 60, 0
+turns it off) lets the trend and mean-reversion leaders see the reference price S
+seconds ahead of the market: hl-sim draws the reference walk itself that far in advance
+(`Foresight`, same volatility as the market simulation, seeded by `-leaders-seed`) and
+pins the market to its current point, so the noise traders quote around a price the
+leaders already know. With the edge:
+
+| Strategy | Signal | Expected result |
+| --- | --- | --- |
+| `trend` | long when the reference ahead is above the mid by its threshold (5 to 30 bp), short when below, holds its side in between | net positive |
+| `mean-reversion` | short when the mid is above fair value (the reference ahead) by its threshold, long when below, flat in between | net positive, smaller |
+| `random` | random long / flat / short switches, no signal | net negative: fees and slippage |
+
+Without the edge, trend uses a moving-average crossover of the mid and mean reversion
+its slow average. Anchored coins follow a real market and get no edge. Ten simulated
+minutes with nine leaders and seed 1 (`test/test_leader_edge.ml`) rank them, in USD
+after fees:
+
+| Leader | With the edge | Without |
+| --- | ---: | ---: |
+| mean-reversion-7 | +4955 | -1469 |
+| trend-6 | +4161 | -2475 |
+| trend-0 | +4088 | -2279 |
+| mean-reversion-1 | +3047 | -1245 |
+| trend-3 | +2198 | +210 |
+| mean-reversion-4 | +1830 | -2762 |
+| random-5 | -410 | -1485 |
+| random-8 | -2629 | -1426 |
+| random-2 | -2812 | -1277 |
+
+The same seed gives the same ranking on every run. Across seeds 1 to 5 at least four of
+the six trend and mean-reversion leaders end positive; a random leader occasionally
+ends a short run slightly up.
+
 ```sh
 dune exec hl-sim -- -port 3000 -leaders 9
 curl -s localhost:3000/leaderboard
@@ -358,6 +394,7 @@ are in the [exchange-core README](https://github.com/winterchill-trading/exchang
 | `User_channels` | the `webData2` and `userEvents` websocket channels |
 | `Rankings` | leaderboard rows from sampled account values, deposits and volume |
 | `Leaders` | leader accounts with trend, mean-reversion and random strategies |
+| `Foresight` | the leaders' edge: the market's reference walk drawn ahead of the market |
 | `Anchoring` | price anchors: `-anchor` specs, the reference sources (live feed of the linked clients, raw files, event logs), the anchor wired to the server's clock and websocket, its status |
 | `Server` | cohttp-async server for `/info`, `/exchange` and the `/ws` websocket (async_websocket); owns the engine and drives its market simulation |
 
@@ -403,7 +440,7 @@ in order-book.
 Copy-trading tests: EIP-712 digests and signers against eth_account vectors, agent and
 builder limits, an agent-signed session with a builder fee replayed from the JSON
 journal, following a leader over the websocket, leaderboard windows, reproducible
-leaders, and a run with leaders, approvals and builder fees replayed bit for bit from
+leaders, the leader edge's ranking over ten simulated minutes, and a run with leaders, approvals and builder fees replayed bit for bit from
 the engine journal.
 Anchor tests: a simulator anchored live to another one serving as the reference, and an
 anchored run over the recorded minute in `test/fixtures` (copied from hl-client) whose
