@@ -27,6 +27,7 @@ dune exec hl-sim -- -port 3000
 | `-vol-bps` | 5 | reference price volatility per second, in basis points |
 | `-coins` | all | comma-separated coins the noise traders trade |
 | `-noise-traders` | 10 | noise trader accounts; 0 disables the market simulation |
+| `-oracle-interval-ms` | 3000 | the market simulation publishes its reference as the oracle price this often and the mark follows Hyperliquid's median of oracle and book (see [Hyperliquid specifics](#hyperliquid-specifics)); 0 makes the reference the mark itself |
 | `-initial-balance` | 1000000 | USD credited to any address on first use |
 | `-response-delay-ms` | 0 | delay every `/exchange` response; the order takes effect, and its websocket events go out, at once |
 | `-journal` | none | append every accepted `/exchange` request to this file (JSON lines) |
@@ -87,8 +88,10 @@ curl -s localhost:3000/info -d '{"type": "userFills", "user": "0x000000000000000
 
 `nSigFigs` and `mantissa` are accepted but ignored. An unknown coin returns `null`.
 
-Also served: `maxBuilderFee`, `extraAgents`, `userFillsByTime` and `leaderboard` (see
-[Copy trading](#copy-trading)).
+Also served: `metaAndAssetCtxs` (each coin's context as on `activeAssetCtx`), `orderStatus`,
+`userRole` (`agent` for an approved agent, `user` for an address the simulator has
+credited, else `missing`), and `maxBuilderFee`, `extraAgents`, `userFillsByTime` and
+`leaderboard` (see [Copy trading](#copy-trading)).
 
 ### Exchange
 
@@ -435,6 +438,16 @@ These live in `Adapt`; everything else is the engine's behaviour.
   or be IOC-cancelled. It is never rejected for self-trade
   (`Adapt.self_trade = Expire_maker`).
 - **Market orders** use 5% slippage, as Hyperliquid's SDKs send them.
+- **Oracle, mark and funding.** With the market simulation, the reference walk is the
+  oracle price, published every 3 s (`-oracle-interval-ms`); the engine derives the mark
+  as Hyperliquid's median of the oracle plus the 150 s average premium of the mid, the
+  median of best bid, best ask and last trade, and its 30 s average. Funding then follows
+  the premium of the impact prices (20,000 USDC for BTC and ETH, 6,000 for SOL) over the
+  oracle, sampled every 5 s: `P + clamp (0.01% - P, ±0.05%)` per 8 hours, paid hourly
+  on `size * oracle`. `activeAssetCtx` and `metaAndAssetCtxs` report `oraclePx`,
+  `markPx`, `premium` (latest sample), `funding` (the rate the next hour would pay) and
+  the impact prices. Anchored coins without the simulation keep their anchor's mark and
+  funding rate.
 
 ### Server
 
