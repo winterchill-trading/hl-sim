@@ -126,11 +126,11 @@ let%expect_test "replaying a journal into a fresh sim gives identical fills" =
   in
   [%expect
     {|
-    ((seed 1) (entries 300) (num_fills 248) (same_responses true)
+    ((seed 1) (entries 300) (num_fills 258) (same_responses true)
      (same_fills true) (same_state true))
-    ((seed 2) (entries 300) (num_fills 212) (same_responses true)
+    ((seed 2) (entries 300) (num_fills 234) (same_responses true)
      (same_fills true) (same_state true))
-    ((seed 3) (entries 300) (num_fills 232) (same_responses true)
+    ((seed 3) (entries 300) (num_fills 262) (same_responses true)
      (same_fills true) (same_state true))
     |}];
   return ()

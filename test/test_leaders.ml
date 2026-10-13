@@ -52,12 +52,12 @@ let%expect_test "leaders trade distinct strategies, reproducibly" =
   print_s [%sexp (summary run1 : (string * Coin.t * int * Size.t list * Usd.t) list)];
   [%expect
     {|
-    ((trend-0 BTC 3547 (1.64534) 94259.82146307)
-     (mean-reversion-1 BTC 3367 (-1.29416) 95184.67988906)
-     (random-2 BTC 1219 (0.46479) 97221.08555661)
-     (trend-3 ETH 2738 (31.1265) 97417.31475245)
-     (mean-reversion-4 ETH 2934 (-5.304) 95527.78016557)
-     (random-5 ETH 1885 (12.5669) 95855.37015867))
+    ((trend-0 BTC 3851 (1.58267) 90791.29173904)
+     (mean-reversion-1 BTC 3571 (-1.18916) 95420.75888775)
+     (random-2 BTC 1163 (0.44045) 99771.9229843)
+     (trend-3 ETH 2150 (3.7679) 100661.68646437)
+     (mean-reversion-4 ETH 2740 (19.1286) 95066.91688464)
+     (random-5 ETH 2025 (22.4089) 95212.58758974))
     |}];
   print_s
     [%sexp

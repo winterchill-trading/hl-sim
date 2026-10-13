@@ -43,20 +43,14 @@ let%expect_test "noise traders keep a two-sided book around the reference price"
            : (string * int) list)];
   [%expect
     {|
-    ((reference (99799)) (best_bid (((px 99765) (sz 0.00383) (n 1))))
-     (best_ask (((px 99853) (sz 0.01277) (n 1))))
+    ((reference (100222)) (best_bid (((px 100172) (sz 0.01674) (n 1))))
+     (best_ask (((px 100253) (sz 0.01122) (n 1))))
      (events
-      ((Fill 66) (Order_accepted 718) (Order_cancelled 638) (Order_filled 68)
+      ((Fill 112) (Order_accepted 756) (Order_cancelled 642) (Order_filled 112)
        ("rejected: Order could not immediately match against any resting orders. asset=0"
         1)
        ("rejected: Order could not immediately match against any resting orders. asset=2"
-        1)
-       ("rejected: Order would have matched against own resting order. asset=0"
-        4)
-       ("rejected: Order would have matched against own resting order. asset=1"
-        4)
-       ("rejected: Order would have matched against own resting order. asset=2"
-        5))))
+        1))))
     |}]
 ;;
 

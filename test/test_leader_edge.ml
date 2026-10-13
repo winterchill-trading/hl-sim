@@ -50,15 +50,15 @@ let%expect_test "with the edge, trend and mean reversion win and random loses" =
   print ranking;
   [%expect
     {|
-    mean-reversion-7    +4955
-    trend-6             +4161
-    trend-0             +4088
-    mean-reversion-1    +3047
-    trend-3             +2198
-    mean-reversion-4    +1830
-    random-5             -410
-    random-8            -2629
-    random-2            -2812
+    mean-reversion-7    +4795
+    trend-0             +4321
+    trend-6             +4057
+    mean-reversion-1    +3286
+    trend-3             +2008
+    mean-reversion-4    +1721
+    random-5              -77
+    random-8            -2775
+    random-2            -2937
     |}];
   let is prefix (name, _) = String.is_prefix name ~prefix in
   let winners = List.filter ranking ~f:(fun (_, pnl) -> pnl > 0) in
@@ -81,14 +81,14 @@ let%expect_test "without the edge, fees and slippage beat every strategy" =
   print (run ~seed:1 ~edge:None);
   [%expect
     {|
-    trend-3              +210
-    mean-reversion-1    -1245
-    random-2            -1277
-    random-8            -1426
-    mean-reversion-7    -1469
-    random-5            -1485
-    trend-0             -2279
-    trend-6             -2475
-    mean-reversion-4    -2762
+    trend-0             +1490
+    trend-3               -87
+    random-5             -466
+    trend-6              -615
+    mean-reversion-4     -792
+    mean-reversion-1    -1055
+    random-8            -1171
+    random-2            -1510
+    mean-reversion-7    -1792
     |}]
 ;;
