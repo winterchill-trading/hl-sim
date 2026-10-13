@@ -18,9 +18,14 @@ val default_meta : Meta.t
     1.5 bps. *)
 val base_fees : Exchange_core.Fee_schedule.t
 
+(** Hyperliquid's mainnet margin tiers (docs, "Margin tiers"): BTC 40x up to 150M USDC
+    then 20x, ETH 25x up to 100M then 15x, SOL 20x up to 70M then 10x. *)
+val mainnet_margin_tiers : (Coin.t * Exchange_core.Margin_tier.t list) list
+
 (** Hyperliquid perp rules: size step [10^-szDecimals], price tick [10^-(6 - szDecimals)]
     and at most 5 significant figures (integers always allowed), [fees] (default
-    {!base_fees}). *)
+    {!base_fees}), and the coin's {!mainnet_margin_tiers} when its first tier is at the
+    asset's [maxLeverage]. *)
 val instrument
   :  ?fees:Exchange_core.Fee_schedule.t
   -> Meta.Asset_meta.t
@@ -57,6 +62,12 @@ val create_exchange
 
 (** The universe in asset index order. *)
 val meta : Exchange.t -> Meta.t
+
+(** The [meta] response with each asset's [marginTableId] and the [marginTables]
+    ([[id, {"description": "", "marginTiers": [{"lowerBound", "maxLeverage"}, ...]}]]). A
+    single-tier table's id is its leverage, as on Hyperliquid; tiered tables are numbered
+    from 51 by the simulator. *)
+val meta_json : Exchange.t -> Yojson.Safe.t
 
 (** {2 Exchange endpoint} *)
 

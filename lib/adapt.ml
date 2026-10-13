@@ -21,9 +21,26 @@ let default_meta : Meta.t =
 
 let base_fees = { Neutral.Fee_schedule.taker_bps = 4.5; maker_bps = 1.5 }
 
+let mainnet_margin_tiers =
+  let tier lower_bound max_leverage =
+    { Neutral.Margin_tier.lower_bound = Usd.of_int lower_bound; max_leverage }
+  in
+  [ Coin.of_string "BTC", [ tier 0 40; tier 150_000_000 20 ]
+  ; Coin.of_string "ETH", [ tier 0 25; tier 100_000_000 15 ]
+  ; Coin.of_string "SOL", [ tier 0 20; tier 70_000_000 10 ]
+  ]
+;;
+
+let margin_tiers (m : Meta.Asset_meta.t) =
+  match List.Assoc.find mainnet_margin_tiers m.name ~equal:Coin.equal with
+  | Some (first :: _ as tiers) when first.max_leverage = m.max_leverage -> tiers
+  | Some _ | None -> []
+;;
+
 let instrument ?(fees = base_fees) (m : Meta.Asset_meta.t) =
   let tick_decimals = Int.clamp_exn (6 - m.sz_decimals) ~min:0 ~max:Price.decimals in
   Neutral.Instrument.create
+    ~margin_tiers:(margin_tiers m)
     m.name
     ~size_decimals:m.sz_decimals
     ~price_tick:(Price.of_units (Price.units_per_one / Int.pow 10 tick_decimals))
@@ -55,6 +72,47 @@ let meta ex : Meta.t =
         ; only_isolated = false
         })
   }
+;;
+
+(* The margin table ids are the simulator's: a single tier is the table numbered by its
+   leverage, as on Hyperliquid (ids below 50), tiered tables count from 51 in universe
+   order (Hyperliquid's own ids for them are not documented). *)
+let meta_json ex =
+  let instruments = Exchange.instruments ex in
+  let table_ids =
+    List.mapi instruments ~f:(fun i (instrument : Neutral.Instrument.t) ->
+      match instrument.margin_tiers with
+      | [] -> instrument.max_leverage
+      | _ -> 51 + i)
+  in
+  let universe =
+    List.map2_exn (meta ex).universe table_ids ~f:(fun asset id ->
+      match Meta.Asset_meta.yojson_of_t asset with
+      | `Assoc fields -> `Assoc (fields @ [ "marginTableId", `Int id ])
+      | json -> json)
+  in
+  let tables =
+    List.map2_exn instruments table_ids ~f:(fun instrument id ->
+      ( id
+      , `List
+          [ `Int id
+          ; `Assoc
+              [ "description", `String ""
+              ; ( "marginTiers"
+                , `List
+                    (List.map
+                       (Neutral.Instrument.margin_tiers instrument)
+                       ~f:(fun (tier : Neutral.Margin_tier.t) ->
+                         `Assoc
+                           [ "lowerBound", `String (Usd.to_string tier.lower_bound)
+                           ; "maxLeverage", `Int tier.max_leverage
+                           ])) )
+              ]
+          ] ))
+    |> List.dedup_and_sort ~compare:(fun (a, _) (b, _) -> Int.compare a b)
+    |> List.map ~f:snd
+  in
+  `Assoc [ "universe", `List universe; "marginTables", `List tables ]
 ;;
 
 (* Conversions *)
