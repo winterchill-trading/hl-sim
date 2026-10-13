@@ -98,3 +98,43 @@ let%expect_test "context of a coin with an oracle price" =
   [%expect
     {| {"channel":"activeAssetCtx","data":{"coin":"BTC","ctx":{"funding":"0.0001250938","openInterest":"0","prevDayPx":"100250","dayNtlVlm":"0","premium":"0.0015007504","oraclePx":"100000","markPx":"100250","midPx":"100250","impactPxs":["100150","100300"],"dayBaseVlm":"0"}}} |}]
 ;;
+
+let%expect_test "metaAndAssetCtxs" =
+  let ex = Adapt.create_exchange () in
+  let server = Server.create ~now:(fun () -> start) ex in
+  let a = Helpers.addr 1 in
+  Server.ensure_account server a;
+  Server.mutate server ~f:(fun ex ->
+    limit ex a ~is_buy:true ~px:"99900" ~sz:"0.5";
+    Exchange.set_oracle ex Helpers.btc (Helpers.px "100000"));
+  Server.handle_info_json server (`Assoc [ "type", `String "metaAndAssetCtxs" ])
+  |> Yojson.Safe.pretty_to_string
+  |> print_endline;
+  [%expect
+    {|
+    [
+      {
+        "universe": [
+          { "name": "BTC", "szDecimals": 5, "maxLeverage": 40 },
+          { "name": "ETH", "szDecimals": 4, "maxLeverage": 25 },
+          { "name": "SOL", "szDecimals": 2, "maxLeverage": 20 }
+        ]
+      },
+      [
+        {
+          "funding": "0.0000125",
+          "openInterest": "0",
+          "prevDayPx": "99900",
+          "dayNtlVlm": "0",
+          "premium": "0.0",
+          "oraclePx": "100000",
+          "markPx": "99900",
+          "midPx": null,
+          "dayBaseVlm": "0"
+        },
+        null,
+        null
+      ]
+    ]
+    |}]
+;;
