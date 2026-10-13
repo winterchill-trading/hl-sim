@@ -13,9 +13,10 @@
     Its averages' lengths, leverage (0.5x to 3x of account value) and thresholds are drawn
     from a generator seeded with [Config.seed] and [i], so a leader keeps the same
     address, coin, strategy and parameters across runs: restarting the simulator with the
-    same flags gives the same leaders. Leaders trade with market orders through the
-    engine's ordinary calls, so an input journal replays them. Without a book (no market
-    simulation or anchor) they stay flat. *)
+    same flags gives the same leaders. Leaders trade with IOC orders at most 20 bps
+    through the book (partial fills close the gap over later rounds), through the engine's
+    ordinary calls, so an input journal replays them. Without a book (no market simulation
+    or anchor) they stay flat. *)
 
 open! Core
 open! Hl_protocol

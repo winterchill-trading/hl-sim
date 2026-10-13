@@ -166,8 +166,11 @@ let decide t (s : state) ~mid =
     let sz = Size.of_string (sprintf "%.*f" decimals (Float.abs diff)) in
     if Size.is_positive sz
     then
+      (* At most 20 bps through the book: a leader takes what is there and works towards
+         its target over the next rounds instead of sweeping the noise traders' book. *)
       ignore
         (Adapt.market_order
+           ~slippage_bps:20
            t.exchange
            s.leader.address
            ~coin:s.leader.coin
