@@ -1,14 +1,15 @@
 open! Core
 open! Hl_protocol
-open Ppx_yojson_conv_lib.Yojson_conv.Primitives
 module Notional = Fixed_decimal.Product (Price) (Size) (Usd)
 
-type t =
-  { b : Address.t
-  ; f : int
+type t = Builder_fee.t =
+  { builder : Address.t
+  ; fee_tenths_bp : int
   }
-[@@deriving sexp, compare, equal, yojson] [@@yojson.allow_extra_fields]
+[@@deriving sexp, compare, equal]
 
+let yojson_of_t = Builder_fee.yojson_of_t
+let t_of_yojson = Builder_fee.t_of_yojson
 let max_perp_fee = 100
 let min_builder_account_value = Usd.of_int 100
 
@@ -18,19 +19,8 @@ let of_action_json json =
   | Some b -> Some (t_of_yojson b)
 ;;
 
-let fee t ~px ~sz = Usd.of_units (Usd.to_units (Notional.mul px sz) * t.f / 100_000)
-
-let tenths_bps_of_rate rate =
-  let error () = Or_error.error_s [%message "invalid maxFeeRate" rate] in
-  match String.chop_suffix (String.strip rate) ~suffix:"%" with
-  | None -> error ()
-  | Some pct ->
-    (* 1% is 1000 tenths of a bp, so three decimals of the percentage are whole units. *)
-    (match Usd.of_string_opt pct with
-     | None -> error ()
-     | Some pct ->
-       let units = Usd.to_units pct * 1000 in
-       if Usd.is_negative pct || units % Usd.units_per_one <> 0
-       then error ()
-       else Ok (units / Usd.units_per_one))
+let fee t ~px ~sz =
+  Usd.of_units (Usd.to_units (Notional.mul px sz) * t.fee_tenths_bp / 100_000)
 ;;
+
+let tenths_bps_of_rate = Builder_fee.tenths_bp_of_percent

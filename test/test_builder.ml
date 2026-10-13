@@ -14,15 +14,15 @@ let%expect_test "fee rates" =
     (0.001% (Ok 1))
     (0% (Ok 0))
     (1% (Ok 1000))
-    (0.0001% (Error ("invalid maxFeeRate" 0.0001%)))
-    (-0.01% (Error ("invalid maxFeeRate" -0.01%)))
-    (0.01 (Error ("invalid maxFeeRate" 0.01)))
-    (x% (Error ("invalid maxFeeRate" x%)))
+    (0.0001% (Error ("not a fee percentage" 0.0001%)))
+    (-0.01% (Error ("not a fee percentage" -0.01%)))
+    (0.01 (Error ("not a fee percentage" 0.01)))
+    (x% (Error ("not a fee percentage" x%)))
     |}]
 ;;
 
 let%expect_test "fees" =
-  let builder f = { Builder.b = Helpers.addr 0xbb; f } in
+  let builder f = { Builder.builder = Helpers.addr 0xbb; fee_tenths_bp = f } in
   List.iter [ 1; 10; 100 ] ~f:(fun f ->
     print_s
       [%sexp
@@ -44,8 +44,9 @@ let%expect_test "decoding the builder field" =
       (decode
          {|{"type":"order","orders":[],"builder":{"b":"0x00000000000000000000000000000000000000BB","f":10}}|}
        : Builder.t option)];
-  [%expect {|
+  [%expect
+    {|
     ()
-    (((b 0x00000000000000000000000000000000000000bb) (f 10)))
+    (((builder 0x00000000000000000000000000000000000000bb) (fee_tenths_bp 10)))
     |}]
 ;;
