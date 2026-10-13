@@ -2,17 +2,34 @@
     ({!Exchange_core_engine.Exchange}, translated by {!Adapt}), speaking Hyperliquid's
     public API on a single port:
 
-    - [POST /info]: an {!Hl_protocol.Info_request.t}, answered with the
-      {!Hl_protocol.Info_response.t} JSON ([null] for an unknown coin). [nSigFigs] and
-      [mantissa] are ignored.
-    - [POST /exchange]: an {!Hl_protocol.Exchange_request.t}, answered with an
-      {!Hl_protocol.Exchange_response.t}. Signatures are not verified. The acting address
-      is the [X-Address] header if present, else the request's [vaultAddress], else
-      [Config.default_address].
-    - [GET /ws] with [Upgrade: websocket]: Hyperliquid's websocket protocol
-      ({!Hl_protocol.Ws_request.t} in, {!Hl_protocol.Ws_message.t} out), plus the
-      [activeAssetCtx] channel ({!Active_asset_ctx}), sent on subscribe and with every
-      [allMids] broadcast.
+    {ul
+     {- [POST /info]: an {!Hl_protocol.Info_request.t}, answered with the
+        {!Hl_protocol.Info_response.t} JSON ([null] for an unknown coin). [nSigFigs] and
+        [mantissa] are ignored.
+    }
+     {- [POST /exchange]: an {!Hl_protocol.Exchange_request.t} or a {!User_action.t},
+        answered with an {!Hl_protocol.Exchange_response.t}. Who acts:
+       - [approveAgent] and [approveBuilderFee] act for the address that signed them
+         (EIP-712, {!User_action.signer}); an agent's signature is refused. Unsigned, they
+         act for the [X-Address] header (or [Config.default_address]).
+       - an order, cancel or modify whose L1 signature recovers (testnet or mainnet
+         domain) to an approved agent acts for the agent's account; the agent's nonce is
+         checked ({!Agents.use_nonce}).
+       - anything else acts for the [X-Address] header if present, else the request's
+         [vaultAddress], else [Config.default_address]; its signature is not checked.
+
+       With [Config.strict_signatures], every request must be signed: an L1 action acts
+       for its signer (or the signer's account if it is an agent), recovered in the
+       [Config.is_mainnet] domain, and [X-Address] is ignored. An order action's [builder]
+       code ({!Builder}) must be approved by the account, at most 0.1%, for a builder with
+       at least $100; its fee is charged on every fill of those orders.
+    }
+     {- [GET /ws] with [Upgrade: websocket]: Hyperliquid's websocket protocol
+        ({!Hl_protocol.Ws_request.t} in, {!Hl_protocol.Ws_message.t} out), plus the
+        [activeAssetCtx] channel ({!Active_asset_ctx}), sent on subscribe and with every
+        [allMids] broadcast.
+    }
+    }
 
     - [GET /status]: {!status}.
 
@@ -46,11 +63,17 @@ module Config : sig
     ; max_ws_queue : int
     (** messages a websocket subscriber may have waiting to be sent; a subscriber that
         falls further behind (stops reading) is disconnected *)
+    ; strict_signatures : bool
+    (** require and verify a signature on every [POST /exchange] *)
+    ; is_mainnet : bool (** the L1 signing domain checked in strict mode *)
+    ; max_ws_users : int
+    (** distinct users one websocket connection may follow through user subscriptions *)
     }
   [@@deriving sexp_of]
 
   (** $1,000,000, address [0x0000000000000000000000000000000000000001], 50ms, 1s, 1s, no
-      response delay, 10,000 queued websocket messages. *)
+      response delay, 10,000 queued websocket messages, signatures not required, testnet
+      domain, 10 users per websocket connection. *)
   val default : t
 end
 
@@ -68,6 +91,9 @@ val create
   -> t
 
 val config : t -> Config.t
+
+(** Agent and builder approvals. *)
+val agents : t -> Agents.t
 
 (** Credits [initial_balance] to [address] unless it has been seen before. *)
 val ensure_account : t -> Address.t -> unit
@@ -97,15 +123,40 @@ val publish_events : t -> unit
     (exposed for tests; the HTTP server calls these) *)
 
 val handle_info : t -> Info_request.t -> Yojson.Safe.t
-val handle_exchange : t -> Address.t -> Exchange_request.t -> Exchange_response.t
 
-(** Applies journaled requests, in order, to a server over [exchange] (normally fresh from
-    {!Adapt.create_exchange}), stepping the clock to each entry's [time] first. Returns
-    the server, whose clock stays at the last entry's time, and the responses. *)
+(** Applies an exchange request for [address], already authenticated. [builder] is the
+    order action's builder code. *)
+val handle_exchange
+  :  ?builder:Builder.t
+  -> t
+  -> Address.t
+  -> Exchange_request.t
+  -> Exchange_response.t
+
+(** Applies a user-signed action for [address], already authenticated; [signature] is only
+    journaled. *)
+val handle_user_action
+  :  ?signature:Yojson.Safe.t
+  -> t
+  -> Address.t
+  -> User_action.t
+  -> Exchange_response.t
+
+(** A [POST /exchange] body: authenticates it (see above; [x_address] is the header) and
+    applies it. Raises on a body that does not decode. *)
+val handle_exchange_json
+  :  t
+  -> x_address:Address.t option
+  -> Yojson.Safe.t
+  -> Exchange_response.t
+
+(** Applies journaled records, in order, to a server over [exchange] (normally fresh from
+    {!Adapt.create_exchange}), stepping the clock to each record's [time] first. Returns
+    the server, whose clock stays at the last record's time, and the responses. *)
 val replay
   :  ?config:Config.t
   -> Exchange.t
-  -> Journal.Entry.t list
+  -> Journal.Record.t list
   -> t * Exchange_response.t list
 
 (** {2 Network} *)
