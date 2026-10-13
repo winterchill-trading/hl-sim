@@ -36,7 +36,11 @@ let config ?(meta = default_meta) ?fees () =
   }
 ;;
 
-let create_exchange ?meta ?fees () = Exchange.create ~config:(config ?meta ?fees ()) ()
+let self_trade : Order_book.Stp.t = Expire_maker
+
+let create_exchange ?meta ?fees () =
+  Exchange.create ~config:(config ?meta ?fees ()) ~self_trade ()
+;;
 
 let meta ex : Meta.t =
   { universe =
@@ -71,7 +75,9 @@ let reject_message meta ?coin (reason : Neutral.Reject_reason.t) =
   | Insufficient_margin -> "Insufficient margin to place order." ^ suffix
   | No_liquidity ->
     "Order could not immediately match against any resting orders." ^ suffix
-  | Self_trade -> "Order would have matched against own resting order." ^ suffix
+  (* Not produced under [Expire_maker], where a taker is never rejected for self-trade;
+     kept for front ends that record it with [Exchange.reject]. *)
+  | Self_trade -> "Order was canceled by self-trade prevention." ^ suffix
   | Post_only_would_cross { best_bid; best_ask } ->
     let show = Option.value_map ~default:"none" ~f:Price.to_string in
     sprintf
