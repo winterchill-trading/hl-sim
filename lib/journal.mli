@@ -43,11 +43,22 @@ module User_entry : sig
   [@@deriving sexp, equal, yojson]
 end
 
+(** [updateLeverage], [scheduleCancel] and [batchModify], under ["l1Action"]. *)
+module Extra_entry : sig
+  type t =
+    { time : int
+    ; address : Address.t
+    ; extra_action : Extra_action.t
+    }
+  [@@deriving sexp, equal, yojson]
+end
+
 (** One line of a journal. *)
 module Record : sig
   type t =
     | Request of Entry.t
     | User_action of User_entry.t
+    | Extra of Extra_entry.t
   [@@deriving sexp_of, equal]
 
   val to_line : t -> string

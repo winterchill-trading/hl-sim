@@ -26,24 +26,36 @@ module User_entry = struct
   [@@deriving sexp, equal, yojson]
 end
 
+module Extra_entry = struct
+  type t =
+    { time : int
+    ; address : Address.t
+    ; extra_action : Extra_action.t [@key "l1Action"]
+    }
+  [@@deriving sexp, equal, yojson]
+end
+
 module Record = struct
   type t =
     | Request of Entry.t
     | User_action of User_entry.t
+    | Extra of Extra_entry.t
   [@@deriving sexp_of, equal]
 
   let to_json = function
     | Request e -> Entry.yojson_of_t e
     | User_action e -> User_entry.yojson_of_t e
+    | Extra e -> Extra_entry.yojson_of_t e
   ;;
 
   let to_line t = Yojson.Safe.to_string (to_json t)
 
   let of_line line =
     let json = Yojson.Safe.from_string line in
-    match Json.member json ~key:"userAction" with
-    | Some _ -> User_action (User_entry.t_of_yojson json)
-    | None -> Request (Entry.t_of_yojson json)
+    match Json.member json ~key:"userAction", Json.member json ~key:"l1Action" with
+    | Some _, _ -> User_action (User_entry.t_of_yojson json)
+    | None, Some _ -> Extra (Extra_entry.t_of_yojson json)
+    | None, None -> Request (Entry.t_of_yojson json)
   ;;
 end
 
