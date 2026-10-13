@@ -115,9 +115,56 @@ let%expect_test "metaAndAssetCtxs" =
     [
       {
         "universe": [
-          { "name": "BTC", "szDecimals": 5, "maxLeverage": 40 },
-          { "name": "ETH", "szDecimals": 4, "maxLeverage": 25 },
-          { "name": "SOL", "szDecimals": 2, "maxLeverage": 20 }
+          {
+            "name": "BTC",
+            "szDecimals": 5,
+            "maxLeverage": 40,
+            "marginTableId": 51
+          },
+          {
+            "name": "ETH",
+            "szDecimals": 4,
+            "maxLeverage": 25,
+            "marginTableId": 52
+          },
+          {
+            "name": "SOL",
+            "szDecimals": 2,
+            "maxLeverage": 20,
+            "marginTableId": 53
+          }
+        ],
+        "marginTables": [
+          [
+            51,
+            {
+              "description": "",
+              "marginTiers": [
+                { "lowerBound": "0", "maxLeverage": 40 },
+                { "lowerBound": "150000000", "maxLeverage": 20 }
+              ]
+            }
+          ],
+          [
+            52,
+            {
+              "description": "",
+              "marginTiers": [
+                { "lowerBound": "0", "maxLeverage": 25 },
+                { "lowerBound": "100000000", "maxLeverage": 15 }
+              ]
+            }
+          ],
+          [
+            53,
+            {
+              "description": "",
+              "marginTiers": [
+                { "lowerBound": "0", "maxLeverage": 20 },
+                { "lowerBound": "70000000", "maxLeverage": 10 }
+              ]
+            }
+          ]
         ]
       },
       [

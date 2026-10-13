@@ -592,6 +592,7 @@ let handle_info t (req : Info_request.t) =
     in
     match response with
     | Some (User_fills fills) -> fills_json t fills
+    | Some (Meta _) -> Adapt.meta_json ex
     | Some r -> Info_response.yojson_of_t r
     | None -> `Null)
 ;;
@@ -679,7 +680,7 @@ let leaderboard t = Rankings.to_json (Rankings.rows t.rankings t.exchange)
 let meta_and_asset_ctxs t =
   let meta = Adapt.meta t.exchange in
   `List
-    [ Meta.yojson_of_t meta
+    [ Adapt.meta_json t.exchange
     ; `List
         (List.map meta.universe ~f:(fun (m : Meta.Asset_meta.t) ->
            Active_asset_ctx.of_exchange t.exchange t.day_stats m.name
