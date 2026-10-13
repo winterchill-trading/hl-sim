@@ -557,6 +557,19 @@ let order_status t json =
 
 let leaderboard t = Rankings.to_json (Rankings.rows t.rankings t.exchange)
 
+(* [[meta, [ctx, ...]]] with one context per coin in universe order ([null] for a coin
+   with no price yet). *)
+let meta_and_asset_ctxs t =
+  let meta = Adapt.meta t.exchange in
+  `List
+    [ Meta.yojson_of_t meta
+    ; `List
+        (List.map meta.universe ~f:(fun (m : Meta.Asset_meta.t) ->
+           Active_asset_ctx.of_exchange t.exchange t.day_stats m.name
+           |> Option.value_map ~default:`Null ~f:Active_asset_ctx.ctx_json))
+    ]
+;;
+
 (* An approved agent is an [agent] of its account, any address the server has credited is
    a [user], anything else is [missing]. Vaults and sub-accounts are not modelled. *)
 let user_role t address =
@@ -578,6 +591,7 @@ let handle_extra_info t json =
   | Some (`String "extraAgents") ->
     Some (`List (List.map (Agents.agents t.agents (user ())) ~f:Agents.Agent.to_json))
   | Some (`String "leaderboard") -> Some (leaderboard t)
+  | Some (`String "metaAndAssetCtxs") -> Some (meta_and_asset_ctxs t)
   | Some (`String "userRole") -> Some (user_role t (User_role.t_of_yojson json).user)
   | Some (`String "orderStatus") -> Some (order_status t json)
   | Some (`String "userFillsByTime") ->

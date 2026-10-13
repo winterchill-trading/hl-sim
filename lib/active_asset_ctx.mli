@@ -51,6 +51,9 @@ type t =
 (** The whole websocket message, [{"channel": "activeAssetCtx", "data": ...}]. *)
 val to_ws_message : t -> Yojson.Safe.t
 
+(** The [ctx] object alone, as in [metaAndAssetCtxs]. *)
+val ctx_json : t -> Yojson.Safe.t
+
 (** Per-coin traded volume of the current day, fed with every trade. *)
 module Day_stats : sig
   type t

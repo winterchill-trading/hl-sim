@@ -27,7 +27,7 @@ let rate_string x =
   if String.is_suffix s ~suffix:"." then s ^ "0" else s
 ;;
 
-let to_ws_message t =
+let ctx_json t =
   let px p = `String (Price.to_string p) in
   let ctx =
     List.filter_opt
@@ -44,9 +44,13 @@ let to_ws_message t =
       ; Some ("dayBaseVlm", `String (Size.to_string t.day_base_vlm))
       ]
   in
+  `Assoc ctx
+;;
+
+let to_ws_message t =
   `Assoc
     [ "channel", `String "activeAssetCtx"
-    ; "data", `Assoc [ "coin", `String (Coin.to_string t.coin); "ctx", `Assoc ctx ]
+    ; "data", `Assoc [ "coin", `String (Coin.to_string t.coin); "ctx", ctx_json t ]
     ]
 ;;
 
