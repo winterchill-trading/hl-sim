@@ -360,7 +360,9 @@ let handle_exchange ?builder t address (req : Exchange_request.t) : Exchange_res
     match req.action with
     | Order { orders; grouping = _ } ->
       (match builder with
-       | Some builder -> place_with_builder t ex address builder orders
+       | Some builder ->
+         ensure_account t builder.b;
+         place_with_builder t ex address builder orders
        | None ->
          Exchange_response.Ok (Order (List.map orders ~f:(Adapt.place_order ex address))))
     | Cancel { cancels } ->
@@ -387,6 +389,8 @@ let handle_user_action ?signature t address (action : User_action.t) : Exchange_
       match action with
       | Approve_agent approve -> Agents.approve_agent t.agents ~user:address approve
       | Approve_builder_fee approve ->
+        (* Funding the builder here, inside the journaled request, keeps replays exact. *)
+        ensure_account t approve.builder;
         (match Builder.tenths_bps_of_rate approve.max_fee_rate with
          | Error _ -> Error (sprintf "Invalid max fee rate %s." approve.max_fee_rate)
          | Ok tenths_bps ->
