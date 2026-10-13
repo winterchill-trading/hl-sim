@@ -336,7 +336,7 @@ let%expect_test "reduce-only orders are clipped to the position" =
     |}]
 ;;
 
-let%expect_test "set_mark liquidates and cancels the account's orders" =
+let%expect_test "set_mark cancels the account's orders, then the backstop takes over" =
   let ex = fresh () in
   Exchange.deposit ex (addr 4) (usd "60");
   place ex 2 Sell "100000" "0.02";
@@ -358,8 +358,8 @@ let%expect_test "set_mark liquidates and cancels the account's orders" =
   print_s [%sexp (Adapt.open_orders ex (addr 4) : Open_order.t list)];
   [%expect
     {|
-    liquidation 0004 BTC 0.01@94500 pnl -55
     cancelled 0004 oid=3 B 0.0002@90000 Liquidated
+    liquidation 0004 BTC 0.01@94500 pnl -55
     ()
     |}]
 ;;

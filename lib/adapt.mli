@@ -39,7 +39,16 @@ val config
     behind it. *)
 val self_trade : Order_book.Stp.t
 
-(** An exchange with {!config} and {!self_trade}. *)
+(** The simulator's stand-in for Hyperliquid's liquidator vault (an HLP strategy), which
+    takes over backstop liquidations: [0x000000000000000000000000000000000000ffff]. *)
+val liquidator : Address.t
+
+(** Hyperliquid's liquidation ({!Exchange_core_engine.Book_liquidation}): market orders to
+    the book first (20% slices of positions above 100,000 USDC, then 30 s of full-size
+    orders), the backstop by {!liquidator} below two thirds of maintenance margin. *)
+val book_liquidation : Exchange_core_engine.Book_liquidation.Config.t
+
+(** An exchange with {!config}, {!self_trade} and {!book_liquidation}. *)
 val create_exchange
   :  ?meta:Meta.t
   -> ?fees:Exchange_core.Fee_schedule.t

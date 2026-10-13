@@ -39,9 +39,11 @@ let config ?(meta = default_meta) ?fees () =
 ;;
 
 let self_trade : Order_book.Stp.t = Expire_maker
+let liquidator = Address.of_string "0x000000000000000000000000000000000000ffff"
+let book_liquidation = Exchange_core_engine.Book_liquidation.Config.create ~liquidator
 
 let create_exchange ?meta ?fees () =
-  Exchange.create ~config:(config ?meta ?fees ()) ~self_trade ()
+  Exchange.create ~config:(config ?meta ?fees ()) ~self_trade ~book_liquidation ()
 ;;
 
 let meta ex : Meta.t =
