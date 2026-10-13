@@ -1127,9 +1127,11 @@ let run_leaders t leaders =
     mutate t ~f:(fun _ -> Leaders.tick leaders))
 ;;
 
-let run_market_sim t sim =
+let run_market_sim ?foresight t sim =
   List.iteri (Market_sim.traders sim) ~f:(fun i address ->
     adopt t address ~display_name:(sprintf "noise-%d" i));
   Clock_ns.every (Market_sim.config sim).tick_interval (fun () ->
-    mutate t ~f:(fun _ -> Market_sim.tick sim))
+    mutate t ~f:(fun _ ->
+      Option.iter foresight ~f:Foresight.tick;
+      Market_sim.tick sim))
 ;;

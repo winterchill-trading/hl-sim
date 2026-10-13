@@ -208,8 +208,13 @@ val start_periodic : t -> unit
 
 (** Calls {!Exchange_core_engine.Market_sim.tick} every [tick_interval] through {!mutate},
     so the resulting events reach websocket subscribers. The noise traders are named
-    ["noise-<i>"] on the leaderboard and are not credited the initial balance. *)
-val run_market_sim : t -> Exchange_core_engine.Market_sim.t -> unit
+    ["noise-<i>"] on the leaderboard and are not credited the initial balance. With
+    [foresight], {!Foresight.tick} runs right before every market tick. *)
+val run_market_sim
+  :  ?foresight:Foresight.t
+  -> t
+  -> Exchange_core_engine.Market_sim.t
+  -> unit
 
 (** Calls {!Leaders.tick} every [decision_interval] through {!mutate}, and names the
     leaders on the leaderboard (they are not credited the initial balance). Create the
