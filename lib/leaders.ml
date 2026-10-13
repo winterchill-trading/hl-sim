@@ -62,16 +62,19 @@ type state =
   ; rand : Random.State.t
   ; fast_alpha : float
   ; slow_alpha : float
-  ; threshold : float (** mean reversion: relative distance from the slow average *)
+  ; threshold : float
+  (** mean reversion: relative distance from fair value; trend with an edge: the smallest
+      move it acts on *)
   ; switch_probability : float (** random: chance per round of picking a new side *)
   ; mutable fast : float option
   ; mutable slow : float option
-  ; mutable random_side : int
+  ; mutable held : int (** random, and trend with an edge: the side it holds *)
   }
 
 type t =
   { config : Config.t
   ; exchange : Exchange.t
+  ; foresight : Foresight.t option
   ; states : state list
   }
 
@@ -79,7 +82,7 @@ let address i = Address.of_string (sprintf "0x1eade5%034x" i)
 let config t = t.config
 let leaders t = List.map t.states ~f:(fun s -> s.leader)
 
-let create (config : Config.t) exchange =
+let create ?foresight (config : Config.t) exchange =
   let coins =
     match config.coins with
     | [] ->
@@ -108,11 +111,11 @@ let create (config : Config.t) exchange =
       ; switch_probability = Random.State.float_range rand 0.02 0.1
       ; fast = None
       ; slow = None
-      ; random_side = 0
+      ; held = 0
       })
   in
   List.iter states ~f:(fun s -> Exchange.deposit exchange s.leader.address config.balance);
-  { config; exchange; states }
+  { config; exchange; foresight; states }
 ;;
 
 let ema alpha prev x =
@@ -121,18 +124,32 @@ let ema alpha prev x =
   | Some prev -> prev +. (alpha *. (x -. prev))
 ;;
 
-(* -1 short, 0 flat, 1 long. *)
-let side s ~mid =
+(* -1 short, 0 flat, 1 long. [seen] is the reference price ahead when the leader has an
+   edge, else the mid. *)
+let side t s ~mid ~seen =
+  let edge = Option.is_some t.foresight in
   match s.leader.strategy, s.fast, s.slow with
+  | Trend, _, _ when edge ->
+    (* Goes with the move it sees coming and holds that side until it sees one the other
+       way. *)
+    let move = (seen -. mid) /. mid in
+    if Float.(move > s.threshold)
+    then s.held <- 1
+    else if Float.(move < -.s.threshold)
+    then s.held <- -1;
+    s.held
   | Trend, Some fast, Some slow ->
     if Float.(fast > slow) then 1 else if Float.(fast < slow) then -1 else 0
   | Mean_reversion, _, Some slow ->
-    let dev = (mid -. slow) /. slow in
+    (* Fades the mid's distance from fair value: the reference ahead with an edge, its
+       slow average without. *)
+    let fair = if edge then seen else slow in
+    let dev = (mid -. fair) /. fair in
     if Float.(dev > s.threshold) then -1 else if Float.(dev < -.s.threshold) then 1 else 0
   | Random, _, _ ->
     if Float.(Random.State.float s.rand 1. < s.switch_probability)
-    then s.random_side <- Random.State.int_incl s.rand (-1) 1;
-    s.random_side
+    then s.held <- Random.State.int_incl s.rand (-1) 1;
+    s.held
   | (Trend | Mean_reversion), _, _ -> 0
 ;;
 
@@ -145,9 +162,13 @@ let position ex (s : state) =
 ;;
 
 let decide t (s : state) ~mid =
-  s.fast <- Some (ema s.fast_alpha s.fast mid);
-  s.slow <- Some (ema s.slow_alpha s.slow mid);
-  let side = side s ~mid in
+  let seen =
+    Option.bind t.foresight ~f:(fun f -> Foresight.ahead f s.leader.coin)
+    |> Option.value ~default:mid
+  in
+  s.fast <- Some (ema s.fast_alpha s.fast seen);
+  s.slow <- Some (ema s.slow_alpha s.slow seen);
+  let side = side t s ~mid ~seen in
   let view, current = position t.exchange s in
   let equity = Usd.to_float view.equity in
   let target = Float.of_int side *. s.leader.leverage *. equity /. mid in

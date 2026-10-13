@@ -10,6 +10,14 @@
       average, long when as far below, flat in between;
     - [Random]: switches between long, flat and short at random moments.
 
+    With a {!Foresight.t} (an informational edge), a leader whose coin it covers reads the
+    reference price [Foresight.lookahead] ahead of the market alongside the mid:
+    - [Trend] goes long when the reference ahead is above the mid by more than its
+      threshold, short when as far below, and holds its side in between;
+    - [Mean_reversion] takes the reference ahead as fair value instead of its slow
+      average;
+    - [Random] ignores it and stays a loser on average: fees and slippage with no signal.
+
     Its averages' lengths, leverage (0.5x to 3x of account value) and thresholds are drawn
     from a generator seeded with [Config.seed] and [i], so a leader keeps the same
     address, coin, strategy and parameters across runs: restarting the simulator with the
@@ -62,8 +70,9 @@ end
 
 type t
 
-(** Deposits [balance] into every leader. *)
-val create : Config.t -> Exchange.t -> t
+(** Deposits [balance] into every leader. [foresight] gives the trend and mean-reversion
+    leaders their edge on the coins it covers. *)
+val create : ?foresight:Foresight.t -> Config.t -> Exchange.t -> t
 
 val config : t -> Config.t
 val leaders : t -> Leader.t list
