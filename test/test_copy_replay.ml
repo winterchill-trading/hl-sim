@@ -122,7 +122,11 @@ let%expect_test "a copy-trading run replays from its engine journal" =
   (* The header carries the self-trade policy, which is not part of the config. *)
   let journal =
     Engine_journal.to_string
-      ~header:{ self_trade = Adapt.self_trade }
+      ~header:
+        (Engine_journal.Header.create
+           ~self_trade:Adapt.self_trade
+           ~book_liquidation:Adapt.book_liquidation
+           ())
       (Queue.to_list inputs)
   in
   let header, journalled = ok_exn (Engine_journal.of_string_with_header journal) in

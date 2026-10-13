@@ -236,7 +236,7 @@ let command =
        Option.iter input_journal ~f:(fun path ->
          let journal =
            Exchange_core_engine.Journal.create
-             ~header:{ self_trade = Exchange_core_engine.Exchange.self_trade exchange }
+             ~header:(Exchange_core_engine.Journal.Header.of_exchange exchange)
              path
          in
          Exchange_core_engine.Journal.attach journal exchange;
