@@ -80,3 +80,21 @@ let%expect_test "requests" =
     -
     |}]
 ;;
+
+let%expect_test "context of a coin with an oracle price" =
+  let ex = Adapt.create_exchange () in
+  let stats = Active_asset_ctx.Day_stats.create () in
+  let a = Helpers.addr 1
+  and b = Helpers.addr 2 in
+  List.iter [ a; b ] ~f:(fun u -> Exchange.deposit ex u (Helpers.usd "1000000"));
+  Exchange.step ex ~now:start;
+  (* Deep quotes 0.2% and 0.3% above an oracle of 100000, the bid side two levels deep. *)
+  limit ex a ~is_buy:true ~px:"100200" ~sz:"0.1";
+  limit ex a ~is_buy:true ~px:"100100" ~sz:"1";
+  limit ex b ~is_buy:false ~px:"100300" ~sz:"1";
+  Exchange.set_oracle ex Helpers.btc (Helpers.px "100000");
+  Exchange.step ex ~now:(start + (10 * 1_000_000_000));
+  Option.iter (Active_asset_ctx.of_exchange ex stats Helpers.btc) ~f:print;
+  [%expect
+    {| {"channel":"activeAssetCtx","data":{"coin":"BTC","ctx":{"funding":"0.0001250938","openInterest":"0","prevDayPx":"100250","dayNtlVlm":"0","premium":"0.0015007504","oraclePx":"100000","markPx":"100250","midPx":"100250","impactPxs":["100150","100300"],"dayBaseVlm":"0"}}} |}]
+;;
