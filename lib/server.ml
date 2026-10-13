@@ -438,7 +438,9 @@ let publish t =
       Map.add_multi acc ~key:address ~data:update)
   in
   t.rejection_updates <- [];
-  Map.iteri updates ~f:(fun ~key:user ~data -> List.iter data ~f:(remember_order t user));
+  (* [data] is newest first; remember the latest update last. *)
+  Map.iteri updates ~f:(fun ~key:user ~data ->
+    List.iter (List.rev data) ~f:(remember_order t user));
   Map.iteri updates ~f:(fun ~key:user ~data ->
     broadcast t (Order_updates { user }) (Order_updates (List.rev data)));
   schedule_l2_flush t
