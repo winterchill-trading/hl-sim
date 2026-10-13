@@ -14,16 +14,31 @@ module Exchange := Exchange_core_engine.Exchange
 (** BTC (szDecimals 5, 40x), ETH (4, 25x), SOL (2, 20x); asset indices 0, 1, 2. *)
 val default_meta : Meta.t
 
+(** Hyperliquid's base perps fee tier (below $5M of 14-day volume): taker 4.5 bps, maker
+    1.5 bps. *)
+val base_fees : Exchange_core.Fee_schedule.t
+
 (** Hyperliquid perp rules: size step [10^-szDecimals], price tick [10^-(6 - szDecimals)]
-    and at most 5 significant figures (integers always allowed), base-tier fees (taker 3.5
-    bps, maker 1 bp). *)
-val instrument : Meta.Asset_meta.t -> Exchange_core.Instrument.t
+    and at most 5 significant figures (integers always allowed), [fees] (default
+    {!base_fees}). *)
+val instrument
+  :  ?fees:Exchange_core.Fee_schedule.t
+  -> Meta.Asset_meta.t
+  -> Exchange_core.Instrument.t
 
 (** {!Exchange_core_engine.Exchange.Config.default} with the instruments of [meta]
     (default {!default_meta}). *)
-val config : ?meta:Meta.t -> unit -> Exchange.Config.t
+val config
+  :  ?meta:Meta.t
+  -> ?fees:Exchange_core.Fee_schedule.t
+  -> unit
+  -> Exchange.Config.t
 
-val create_exchange : ?meta:Meta.t -> unit -> Exchange.t
+val create_exchange
+  :  ?meta:Meta.t
+  -> ?fees:Exchange_core.Fee_schedule.t
+  -> unit
+  -> Exchange.t
 
 (** The universe in asset index order. *)
 val meta : Exchange.t -> Meta.t

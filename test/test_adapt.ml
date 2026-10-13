@@ -116,9 +116,9 @@ let%expect_test "resting, crossing, and the info views" =
     {|
     accepted 0001 oid=1 A 0.01@100000
     accepted 0001 oid=2 A 0.02@100100
-    fill tid=1 0.01@100000 taker=0002(Open Long fee 0.35) maker=0001(Open Short fee 0.1)
+    fill tid=1 0.01@100000 taker=0002(Open Long fee 0.45) maker=0001(Open Short fee 0.15)
     filled 0001 oid=1 A 0@100000
-    fill tid=2 0.005@100100 taker=0002(Open Long fee 0.175175) maker=0001(Open Short fee 0.05005)
+    fill tid=2 0.005@100100 taker=0002(Open Long fee 0.225225) maker=0001(Open Short fee 0.075075)
     filled 0002 oid=3 B 0@100100
     |}];
   print_s [%sexp (Adapt.open_orders ex (addr 1) : Open_order.t list)];
@@ -132,12 +132,12 @@ let%expect_test "resting, crossing, and the info views" =
     (((coin BTC) (px 100100) (sz 0.005) (side Buy) (time 1000)
       (start_position 0.01) (dir "Open Long") (closed_pnl 0)
       (hash 0x0000000000000000000000000000000000000000000000000000000000000002)
-      (oid 3) (crossed true) (fee 0.175175) (tid 2) (fee_token (USDC))
+      (oid 3) (crossed true) (fee 0.225225) (tid 2) (fee_token (USDC))
       (cloid ()))
      ((coin BTC) (px 100000) (sz 0.01) (side Buy) (time 1000) (start_position 0)
       (dir "Open Long") (closed_pnl 0)
       (hash 0x0000000000000000000000000000000000000000000000000000000000000001)
-      (oid 3) (crossed true) (fee 0.35) (tid 1) (fee_token (USDC)) (cloid ())))
+      (oid 3) (crossed true) (fee 0.45) (tid 1) (fee_token (USDC)) (cloid ())))
     (((coin BTC) (time 1000) (bids ()) (asks (((px 100100) (sz 0.015) (n 1))))))
     ()
     |}];
@@ -149,12 +149,12 @@ let%expect_test "resting, crossing, and the info views" =
         (position_value 1501.5) (unrealized_pnl 1.00000001) (liquidation_px ())
         (leverage (Cross (value 20))) (margin_used 75.075) (max_leverage 40))))
      (margin_summary
-      ((account_value 10000.47482501) (total_ntl_pos 1501.5)
-       (total_raw_usd 9999.474825) (total_margin_used 75.075)))
+      ((account_value 10000.32477501) (total_ntl_pos 1501.5)
+       (total_raw_usd 9999.324775) (total_margin_used 75.075)))
      (cross_margin_summary
-      ((account_value 10000.47482501) (total_ntl_pos 1501.5)
-       (total_raw_usd 9999.474825) (total_margin_used 75.075)))
-     (cross_maintenance_margin_used 18.76875) (withdrawable 9925.39982501)
+      ((account_value 10000.32477501) (total_ntl_pos 1501.5)
+       (total_raw_usd 9999.324775) (total_margin_used 75.075)))
+     (cross_maintenance_margin_used 18.76875) (withdrawable 9925.24977501)
      (time 1000))
     |}]
 ;;
@@ -235,16 +235,16 @@ let%expect_test "self-trade, IOC partial fill and market orders" =
     accepted 0001 oid=1 A 0.01@100000
     accepted 0002 oid=2 A 0.01@100100
     rejected 0001 Order would have matched against own resting order. asset=0
-    fill tid=1 0.01@100000 taker=0003(Open Long fee 0.35) maker=0001(Open Short fee 0.1)
+    fill tid=1 0.01@100000 taker=0003(Open Long fee 0.45) maker=0001(Open Short fee 0.15)
     filled 0001 oid=1 A 0@100000
-    fill tid=2 0.01@100100 taker=0003(Open Long fee 0.35035) maker=0002(Open Short fee 0.1001)
+    fill tid=2 0.01@100100 taker=0003(Open Long fee 0.45045) maker=0002(Open Short fee 0.15015)
     filled 0002 oid=2 A 0@100100
     cancelled 0003 oid=4 B 0.03@100100 Ioc_unfilled
     accepted 0001 oid=5 B 0.01@99000
     accepted 0001 oid=6 B 0.01@98000
-    fill tid=3 0.01@99000 taker=0003(Close Long fee 0.3465) maker=0001(Close Short fee 0.099)
+    fill tid=3 0.01@99000 taker=0003(Close Long fee 0.4455) maker=0001(Close Short fee 0.1485)
     filled 0001 oid=5 B 0@99000
-    fill tid=4 0.01@98000 taker=0003(Close Long fee 0.343) maker=0001(Open Long fee 0.098)
+    fill tid=4 0.01@98000 taker=0003(Close Long fee 0.441) maker=0001(Open Long fee 0.147)
     filled 0001 oid=6 B 0@98000
     cancelled 0003 oid=7 A 0.01@94050 Ioc_unfilled
     |}]

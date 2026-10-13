@@ -17,7 +17,9 @@ let default_meta : Meta.t =
   { universe = [ asset "BTC" 5 40; asset "ETH" 4 25; asset "SOL" 2 20 ] }
 ;;
 
-let instrument (m : Meta.Asset_meta.t) =
+let base_fees = { Neutral.Fee_schedule.taker_bps = 4.5; maker_bps = 1.5 }
+
+let instrument ?(fees = base_fees) (m : Meta.Asset_meta.t) =
   let tick_decimals = Int.clamp_exn (6 - m.sz_decimals) ~min:0 ~max:Price.decimals in
   Neutral.Instrument.create
     m.name
@@ -25,13 +27,16 @@ let instrument (m : Meta.Asset_meta.t) =
     ~price_tick:(Price.of_units (Price.units_per_one / Int.pow 10 tick_decimals))
     ~max_significant_figures:5
     ~max_leverage:m.max_leverage
+    ~fees
 ;;
 
-let config ?(meta = default_meta) () =
-  { Exchange.Config.default with instruments = List.map meta.universe ~f:instrument }
+let config ?(meta = default_meta) ?fees () =
+  { Exchange.Config.default with
+    instruments = List.map meta.universe ~f:(instrument ?fees)
+  }
 ;;
 
-let create_exchange ?meta () = Exchange.create ~config:(config ?meta ()) ()
+let create_exchange ?meta ?fees () = Exchange.create ~config:(config ?meta ?fees ()) ()
 
 let meta ex : Meta.t =
   { universe =

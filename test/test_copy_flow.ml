@@ -134,7 +134,7 @@ let%expect_test "an agent trades for the account that approved it, with a builde
     {"status":"err","response":"Invalid nonce: 1700000000013 was already used."}
     |}];
   print_s [%sexp (balances server : (string * string) list)];
-  [%expect {| ((user 999999.55) (maker 999999.9) (builder 1000000.1)) |}];
+  [%expect {| ((user 999999.45) (maker 999999.85) (builder 1000000.1)) |}];
   let info body =
     print_endline
       (Yojson.Safe.to_string
@@ -154,7 +154,7 @@ let%expect_test "an agent trades for the account that approved it, with a builde
     {|
     10
     [{"name":"copy","address":"0x1563915e194d8cfba1943570603f7606a3115508","validUntil":4102444800000}]
-    [{"coin":"BTC","px":"100000","sz":"0.01","side":"B","time":1700000000000,"startPosition":"0","dir":"Open Long","closedPnl":"0","hash":"0x0000000000000000000000000000000000000000000000000000000000000001","oid":3,"crossed":true,"fee":"0.35","tid":1,"feeToken":"USDC"}]
+    [{"coin":"BTC","px":"100000","sz":"0.01","side":"B","time":1700000000000,"startPosition":"0","dir":"Open Long","closedPnl":"0","hash":"0x0000000000000000000000000000000000000000000000000000000000000001","oid":3,"crossed":true,"fee":"0.45","tid":1,"feeToken":"USDC"}]
     |}];
   let rows = Leaderboard.t_of_yojson (Server.leaderboard server) in
   List.iter rows.leaderboard_rows ~f:(fun row ->
@@ -169,10 +169,10 @@ let%expect_test "an agent trades for the account that approved it, with a builde
      (((pnl 0.1) (roi 1E-07) (vlm 0))))
     (0x0000000000000000000000000000000000000001 1000000
      (((pnl 0) (roi 0) (vlm 0))))
-    (0x00000000000000000000000000000000000000aa 999999.9
-     (((pnl -0.1) (roi -1E-07) (vlm 1000))))
-    (0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a 999999.55
-     (((pnl -0.45) (roi -4.5E-07) (vlm 1000))))
+    (0x00000000000000000000000000000000000000aa 999999.85
+     (((pnl -0.15) (roi -1.5E-07) (vlm 1000))))
+    (0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a 999999.45
+     (((pnl -0.55) (roi -5.5E-07) (vlm 1000))))
     |}];
   let%bind () = Journal.close journal in
   let%bind records = Journal.load path in

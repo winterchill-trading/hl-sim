@@ -91,7 +91,7 @@ let%expect_test "following another account: webData2, userEvents and the user li
      : Exchange_response.t);
   let%bind () = receive incoming in
   [%expect
-    {| {"channel":"user","data":{"fills":[{"coin":"BTC","px":"100000","sz":"0.01","side":"B","time":1700000000000,"startPosition":"0","dir":"Open Long","closedPnl":"0","hash":"0x0000000000000000000000000000000000000000000000000000000000000001","oid":2,"crossed":true,"fee":"0.35","tid":1,"feeToken":"USDC"}]}} |}];
+    {| {"channel":"user","data":{"fills":[{"coin":"BTC","px":"100000","sz":"0.01","side":"B","time":1700000000000,"startPosition":"0","dir":"Open Long","closedPnl":"0","hash":"0x0000000000000000000000000000000000000000000000000000000000000001","oid":2,"crossed":true,"fee":"0.45","tid":1,"feeToken":"USDC"}]}} |}];
   (* Nine more users fit (the leader is the first), the eleventh does not. *)
   List.iter (List.range 1 11) ~f:(fun i ->
     subscribe outgoing "userFills" (Helpers.addr (0xf00 + i)));
