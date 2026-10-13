@@ -220,3 +220,73 @@ let to_json rows =
                ])) )
     ]
 ;;
+
+(* The windows of the [portfolio] response, in Hyperliquid's order. The simulator trades
+   only perps, so the [perp] windows are the same as the others. *)
+let portfolio_windows : (string * Window.t) list =
+  [ "day", Day
+  ; "week", Week
+  ; "month", Month
+  ; "allTime", All_time
+  ; "perpDay", Day
+  ; "perpWeek", Week
+  ; "perpMonth", Month
+  ; "perpAllTime", All_time
+  ]
+;;
+
+let empty_series =
+  `Assoc
+    [ "accountValueHistory", `List []
+    ; "pnlHistory", `List []
+    ; "vlm", `String (Usd.to_string Usd.zero)
+    ]
+;;
+
+(* Points are the window's samples, then the current state, in milliseconds. PnL is
+   relative to the window's start, as in [performance]. *)
+let window_series t ex address window =
+  match Hashtbl.find t.accounts address with
+  | None -> empty_series
+  | Some a ->
+    let now_time = Exchange.now ex in
+    let since =
+      match Window.length_ns window with
+      | None -> Int.min_value
+      | Some len -> now_time - len
+    in
+    let start =
+      match Window.length_ns window with
+      | None -> Sample.origin
+      | Some len -> sample_at a (now_time - len)
+    in
+    let now : Sample.t =
+      { time = now_time
+      ; equity = equity ex address
+      ; deposits = a.deposits
+      ; volume = a.volume
+      }
+    in
+    let samples =
+      Queue.to_list a.samples
+      |> List.filter ~f:(fun (s : Sample.t) -> s.time >= since && s.time < now_time)
+    in
+    let points = samples @ [ now ] in
+    let usd u = `String (Usd.to_string u) in
+    let ms (s : Sample.t) = `Int (s.time / 1_000_000) in
+    let pnl (s : Sample.t) =
+      Usd.(s.equity - s.deposits - (start.equity - start.deposits))
+    in
+    `Assoc
+      [ ( "accountValueHistory"
+        , `List (List.map points ~f:(fun s -> `List [ ms s; usd s.equity ])) )
+      ; "pnlHistory", `List (List.map points ~f:(fun s -> `List [ ms s; usd (pnl s) ]))
+      ; "vlm", usd (performance now start).vlm
+      ]
+;;
+
+let portfolio t ex address =
+  `List
+    (List.map portfolio_windows ~f:(fun (name, window) ->
+       `List [ `String name; window_series t ex address window ]))
+;;

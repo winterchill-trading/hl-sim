@@ -76,3 +76,11 @@ val rows : t -> Exchange.t -> Row.t list
 
 (** [{"leaderboardRows": [...]}]. *)
 val to_json : Row.t list -> Yojson.Safe.t
+
+(** The [portfolio] info response for [address]: [[["day", {...}], ["week", {...}], ...]]
+    over Hyperliquid's eight windows, each
+    [{"accountValueHistory": [[ms, "value"], ...], "pnlHistory": [[ms, "pnl"], ...], "vlm": "volume"}].
+    Points are the account's samples in the window and then its current state; an address
+    with no account gets empty histories. Samples are kept for 31 days, so [allTime]
+    covers at most that. *)
+val portfolio : t -> Exchange.t -> Address.t -> Yojson.Safe.t
