@@ -53,6 +53,8 @@ module Conn = struct
     ; disconnect : unit -> unit
     ; mutable subs : Subscription.Set.t
     ; mutable ctx_coins : Coin.Set.t (** [activeAssetCtx] subscriptions *)
+    ; mutable web_data_users : Address.Set.t (** [webData2] subscriptions *)
+    ; mutable event_users : Address.Set.t (** [userEvents] subscriptions *)
     }
 end
 
@@ -191,6 +193,30 @@ let broadcast_ctx t =
         if Set.mem c.ctx_coins coin then send_text c text)))
 ;;
 
+let broadcast_user_event t user fills =
+  let subscribers =
+    Hashtbl.data t.conns
+    |> List.filter ~f:(fun (c : Conn.t) -> Set.mem c.event_users user)
+  in
+  if not (List.is_empty subscribers)
+  then (
+    let text = Yojson.Safe.to_string (User_channels.user_fills_event fills) in
+    List.iter subscribers ~f:(fun c -> send_text c text))
+;;
+
+(* One [webData2] message per followed user, encoded once. *)
+let broadcast_web_data t =
+  let conns = Hashtbl.data t.conns in
+  let users =
+    List.fold conns ~init:Address.Set.empty ~f:(fun acc (c : Conn.t) ->
+      Set.union acc c.web_data_users)
+  in
+  Set.iter users ~f:(fun user ->
+    let text = Yojson.Safe.to_string (User_channels.web_data2 t.exchange user) in
+    List.iter conns ~f:(fun (c : Conn.t) ->
+      if Set.mem c.web_data_users user then send_text c text))
+;;
+
 let flush_l2 t =
   t.l2_flush_scheduled <- false;
   let coins = Hash_set.to_list t.dirty_books |> List.sort ~compare:Coin.compare in
@@ -303,7 +329,8 @@ let publish t =
     broadcast
       t
       (User_fills { user })
-      (User_fills { is_snapshot = false; user; fills = List.rev data }));
+      (User_fills { is_snapshot = false; user; fills = List.rev data });
+    broadcast_user_event t user (List.rev data));
   Map.iteri updates ~f:(fun ~key:user ~data ->
     broadcast t (Order_updates { user }) (Order_updates (List.rev data)));
   schedule_l2_flush t
@@ -511,12 +538,64 @@ let decode_ws_request text =
   let json = Yojson.Safe.from_string text in
   match Active_asset_ctx.Request.of_json json with
   | Some req -> `Ctx req
-  | None -> `Request (Ws_request.t_of_yojson json)
+  | None ->
+    (match User_channels.Request.of_json json with
+     | Some req -> `User_channel req
+     | None -> `Request (Ws_request.t_of_yojson json))
+;;
+
+(* Every user a connection follows, through any user-specific subscription. *)
+let followed_users (conn : Conn.t) =
+  Set.fold
+    conn.subs
+    ~init:(Set.union conn.web_data_users conn.event_users)
+    ~f:(fun acc -> function
+    | User_fills { user } | Order_updates { user } -> Set.add acc user
+    | L2_book _ | Trades _ | All_mids -> acc)
+;;
+
+(* Hyperliquid allows 10 distinct users across a client's user subscriptions. The limit is
+   documented; the message text is the simulator's. *)
+let check_user_limit t (conn : Conn.t) user =
+  let users = followed_users conn in
+  if Set.mem users user || Set.length users < t.config.max_ws_users
+  then Ok ()
+  else Error (sprintf "Cannot track more than %d total users." t.config.max_ws_users)
+;;
+
+let subscription_user : Subscription.t -> Address.t option = function
+  | User_fills { user } | Order_updates { user } -> Some user
+  | L2_book _ | Trades _ | All_mids -> None
+;;
+
+let handle_user_channel_request t (conn : Conn.t) (req : User_channels.Request.t) =
+  Log.Global.debug_s
+    [%message "ws user channel" ~conn:(conn.id : int) (req : User_channels.Request.t)];
+  let update f =
+    match req.kind with
+    | Web_data2 -> conn.web_data_users <- f conn.web_data_users
+    | User_events -> conn.event_users <- f conn.event_users
+  in
+  if not req.subscribe
+  then (
+    update (fun s -> Set.remove s req.user);
+    send_json conn (User_channels.Request.response req))
+  else (
+    match check_user_limit t conn req.user with
+    | Error msg -> send conn (Error msg)
+    | Ok () ->
+      ensure_account t req.user;
+      update (fun s -> Set.add s req.user);
+      send_json conn (User_channels.Request.response req);
+      (match req.kind with
+       | Web_data2 -> send_json conn (User_channels.web_data2 t.exchange req.user)
+       | User_events -> ()))
 ;;
 
 let handle_ws_message t (conn : Conn.t) text =
   match decode_ws_request text with
   | `Ctx req -> handle_ctx_request t conn req
+  | `User_channel req -> handle_user_channel_request t conn req
   | exception _ ->
     Log.Global.debug "ws %d: invalid message %s" conn.id text;
     send conn (Error (sprintf "Invalid message: %s" text))
@@ -524,9 +603,15 @@ let handle_ws_message t (conn : Conn.t) text =
   | `Request (Subscribe sub as req) ->
     Log.Global.debug_s
       [%message "ws subscribe" ~conn:(conn.id : int) (sub : Subscription.t)];
-    conn.subs <- Set.add conn.subs sub;
-    send conn (Subscription_response req);
-    ws_snapshot t conn sub
+    (match
+       Option.value_map (subscription_user sub) ~default:(Ok ()) ~f:(fun user ->
+         check_user_limit t conn user)
+     with
+     | Error msg -> send conn (Error msg)
+     | Ok () ->
+       conn.subs <- Set.add conn.subs sub;
+       send conn (Subscription_response req);
+       ws_snapshot t conn sub)
   | `Request (Unsubscribe sub as req) ->
     conn.subs <- Set.remove conn.subs sub;
     send conn (Subscription_response req)
@@ -557,6 +642,8 @@ let handle_ws t reader writer =
     ; disconnect
     ; subs = Subscription.Set.empty
     ; ctx_coins = Coin.Set.empty
+    ; web_data_users = Address.Set.empty
+    ; event_users = Address.Set.empty
     }
   in
   Hashtbl.set t.conns ~key:id ~data:conn;
@@ -778,7 +865,8 @@ let port server = Cohttp_async.Server.listening_on server
 let start_periodic t =
   Clock_ns.every t.config.all_mids_interval (fun () ->
     broadcast t All_mids (All_mids (Adapt.all_mids t.exchange));
-    broadcast_ctx t);
+    broadcast_ctx t;
+    broadcast_web_data t);
   Clock_ns.every t.config.step_interval (fun () -> mutate t ~f:ignore)
 ;;
 
