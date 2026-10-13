@@ -135,6 +135,45 @@ let%expect_test "an agent trades for the account that approved it, with a builde
     |}];
   print_s [%sexp (balances server : (string * string) list)];
   [%expect {| ((user 999999.55) (maker 999999.9) (builder 1000000.1)) |}];
+  let info body =
+    print_endline
+      (Yojson.Safe.to_string
+         (Server.handle_info_json server (Yojson.Safe.from_string body)))
+  in
+  info
+    (sprintf
+       {|{"type":"maxBuilderFee","user":"%s","builder":"%s"}|}
+       (Address.to_string user)
+       (Address.to_string builder));
+  info (sprintf {|{"type":"extraAgents","user":"%s"}|} (Address.to_string user));
+  info
+    (sprintf
+       {|{"type":"userFillsByTime","user":"%s","startTime":0}|}
+       (Address.to_string user));
+  [%expect
+    {|
+    10
+    [{"name":"copy","address":"0x1563915e194d8cfba1943570603f7606a3115508","validUntil":4102444800000}]
+    [{"coin":"BTC","px":"100000","sz":"0.01","side":"B","time":1700000000000,"startPosition":"0","dir":"Open Long","closedPnl":"0","hash":"0x0000000000000000000000000000000000000000000000000000000000000001","oid":3,"crossed":true,"fee":"0.35","tid":1,"feeToken":"USDC"}]
+    |}];
+  let rows = Leaderboard.t_of_yojson (Server.leaderboard server) in
+  List.iter rows.leaderboard_rows ~f:(fun row ->
+    print_s
+      [%sexp
+        (row.eth_address : Address.t)
+        , (row.account_value : float)
+        , (Leaderboard.Row.performance row All_time : Leaderboard.Performance.t option)]);
+  [%expect
+    {|
+    (0x00000000000000000000000000000000000000bb 1000000.1
+     (((pnl 0.1) (roi 1E-07) (vlm 0))))
+    (0x0000000000000000000000000000000000000001 1000000
+     (((pnl 0) (roi 0) (vlm 0))))
+    (0x00000000000000000000000000000000000000aa 999999.9
+     (((pnl -0.1) (roi -1E-07) (vlm 1000))))
+    (0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a 999999.55
+     (((pnl -0.45) (roi -4.5E-07) (vlm 1000))))
+    |}];
   let%bind () = Journal.close journal in
   let%bind records = Journal.load path in
   let replayed, _ = Server.replay (Adapt.create_exchange ()) records in
