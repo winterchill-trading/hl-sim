@@ -13,6 +13,7 @@ let%expect_test "GET /status" =
   let%bind response, body = Cohttp_async.Client.get uri in
   let%bind body = Cohttp_async.Body.to_string body in
   printf "%d %s\n" (Cohttp.Code.code_of_status (Cohttp.Response.status response)) body;
-  [%expect {| 200 {"ws_connections":0,"ws_dropped":0,"anchors":["hyperliquid:BTC"]} |}];
+  [%expect
+    {| 200 {"ws_connections":0,"ws_dropped":0,"ws_idle_closed":0,"anchors":["hyperliquid:BTC"]} |}];
   Cohttp_async.Server.close http
 ;;

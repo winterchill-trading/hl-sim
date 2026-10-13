@@ -18,6 +18,7 @@ module Config = struct
     ; strict_signatures : bool
     ; is_mainnet : bool
     ; max_ws_users : int
+    ; ws_idle_timeout : Time_ns.Span.t
     }
   [@@deriving sexp_of]
 
@@ -32,6 +33,7 @@ module Config = struct
     ; strict_signatures = false
     ; is_mainnet = false
     ; max_ws_users = 10
+    ; ws_idle_timeout = Time_ns.Span.minute
     }
   ;;
 end
@@ -50,7 +52,8 @@ module Conn = struct
     { id : int
     ; send : string Pipe.Writer.t
     ; max_queue : int
-    ; disconnect : unit -> unit
+    ; disconnect : [ `Slow | `Idle ] -> unit
+    ; mutable last_sent : Time_ns.t (** wall clock *)
     ; mutable subs : Subscription.Set.t
     ; mutable ctx_coins : Coin.Set.t (** [activeAssetCtx] subscriptions *)
     ; mutable web_data_users : Address.Set.t (** [webData2] subscriptions *)
@@ -66,6 +69,7 @@ type t =
   ; conns : Conn.t Int.Table.t
   ; mutable next_conn_id : int
   ; mutable num_ws_dropped : int
+  ; mutable num_ws_idle_closed : int
   ; dirty_books : Coin.Hash_set.t
   ; mutable l2_flush_scheduled : bool
   ; journal : Journal.t option
@@ -134,6 +138,7 @@ let status t : Yojson.Safe.t =
   `Assoc
     ([ "ws_connections", `Int (Hashtbl.length t.conns)
      ; "ws_dropped", `Int t.num_ws_dropped
+     ; "ws_idle_closed", `Int t.num_ws_idle_closed
      ]
      @ List.map t.status ~f:(fun (name, f) -> name, f ()))
 ;;
@@ -147,6 +152,7 @@ let create ?(config = Config.default) ?(now = wall_clock) ?journal exchange =
     ; conns = Int.Table.create ()
     ; next_conn_id = 0
     ; num_ws_dropped = 0
+    ; num_ws_idle_closed = 0
     ; dirty_books = Coin.Hash_set.create ()
     ; l2_flush_scheduled = false
     ; journal
@@ -195,8 +201,10 @@ let encode_ws msg = Yojson.Safe.to_string (Ws_message.yojson_of_t msg)
    disconnected rather than buffered without bound. *)
 let send_text (conn : Conn.t) text =
   if Pipe.length conn.send >= conn.max_queue
-  then conn.disconnect ()
-  else Pipe.write_without_pushback_if_open conn.send text
+  then conn.disconnect `Slow
+  else (
+    conn.last_sent <- Time_ns.now ();
+    Pipe.write_without_pushback_if_open conn.send text)
 ;;
 
 let send conn msg = send_text conn (encode_ws msg)
@@ -783,15 +791,23 @@ let handle_ws t reader writer =
   let incoming, outgoing = Websocket.pipes ws in
   let id = t.next_conn_id in
   t.next_conn_id <- id + 1;
-  let disconnect () =
+  let disconnect reason =
     if Hashtbl.mem t.conns id
     then (
       Hashtbl.remove t.conns id;
-      t.num_ws_dropped <- t.num_ws_dropped + 1;
-      Log.Global.info
-        "ws %d: disconnected slow consumer (%d messages queued)"
-        id
-        (Pipe.length outgoing);
+      (match reason with
+       | `Slow ->
+         t.num_ws_dropped <- t.num_ws_dropped + 1;
+         Log.Global.info
+           "ws %d: disconnected slow consumer (%d messages queued)"
+           id
+           (Pipe.length outgoing)
+       | `Idle ->
+         t.num_ws_idle_closed <- t.num_ws_idle_closed + 1;
+         Log.Global.info
+           "ws %d: closed after %s with nothing sent"
+           id
+           (Time_ns.Span.to_string_hum t.config.ws_idle_timeout));
       Pipe.close outgoing;
       (* The close frame would wait behind the unread data; drop the socket now. *)
       don't_wait_for (Writer.close ~force_close:Deferred.unit writer))
@@ -801,6 +817,7 @@ let handle_ws t reader writer =
     ; send = outgoing
     ; max_queue = t.config.max_ws_queue
     ; disconnect
+    ; last_sent = Time_ns.now ()
     ; subs = Subscription.Set.empty
     ; ctx_coins = Coin.Set.empty
     ; web_data_users = Address.Set.empty
@@ -1061,7 +1078,22 @@ let listen t ~port =
 
 let port server = Cohttp_async.Server.listening_on server
 
+(* Hyperliquid closes a connection it has sent nothing to for 60 seconds; clients keep
+   quiet connections open with pings, which the pong answers count as sends. *)
+let close_idle_connections t =
+  let now = Time_ns.now () in
+  Hashtbl.data t.conns
+  |> List.iter ~f:(fun (c : Conn.t) ->
+    if Time_ns.Span.(Time_ns.diff now c.last_sent >= t.config.ws_idle_timeout)
+    then c.disconnect `Idle)
+;;
+
 let start_periodic t =
+  Clock_ns.every
+    (Time_ns.Span.min
+       Time_ns.Span.second
+       (Time_ns.Span.scale t.config.ws_idle_timeout 0.25))
+    (fun () -> close_idle_connections t);
   Clock_ns.every t.config.all_mids_interval (fun () ->
     broadcast t All_mids (All_mids (Adapt.all_mids t.exchange));
     broadcast_ctx t;

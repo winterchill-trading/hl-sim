@@ -78,12 +78,15 @@ module Config : sig
     ; is_mainnet : bool (** the L1 signing domain checked in strict mode *)
     ; max_ws_users : int
     (** distinct users one websocket connection may follow through user subscriptions *)
+    ; ws_idle_timeout : Time_ns.Span.t
+    (** a websocket connection the server has sent nothing to for this long (wall clock)
+        is closed, as Hyperliquid does after 60 s; checked by {!start_periodic} *)
     }
   [@@deriving sexp_of]
 
   (** $1,000,000, address [0x0000000000000000000000000000000000000001], 50ms, 1s, 1s, no
       response delay, 10,000 queued websocket messages, signatures not required, testnet
-      domain, 10 users per websocket connection. *)
+      domain, 10 users per websocket connection, 60 s websocket idle timeout. *)
   val default : t
 end
 
@@ -121,8 +124,8 @@ val on_clock_step : t -> (now:int -> unit) -> unit
 (** [add_status t ~name f] adds [name: f ()] to {!status}. *)
 val add_status : t -> name:string -> (unit -> Yojson.Safe.t) -> unit
 
-(** [{"ws_connections": n, "ws_dropped": n, ...}] and the entries of {!add_status}, in the
-    order they were added; served on [GET /status]. *)
+(** [{"ws_connections": n, "ws_dropped": n, "ws_idle_closed": n, ...}] and the entries of
+    {!add_status}, in the order they were added; served on [GET /status]. *)
 val status : t -> Yojson.Safe.t
 
 (** Logs and publishes the events the exchange produced outside {!mutate} (for example by
@@ -192,8 +195,12 @@ val listen
 (** The port the server is bound to. *)
 val port : (Socket.Address.Inet.t, int) Cohttp_async.Server.t -> int
 
-(** Starts the periodic tasks: [allMids], [activeAssetCtx] and [webData2] broadcasts and
-    clock steps. *)
+(** Closes the websocket connections idle for [Config.ws_idle_timeout] (run every second
+    by {!start_periodic}; exposed for tests). *)
+val close_idle_connections : t -> unit
+
+(** Starts the periodic tasks: [allMids], [activeAssetCtx] and [webData2] broadcasts,
+    clock steps and closing idle websocket connections. *)
 val start_periodic : t -> unit
 
 (** Calls {!Exchange_core_engine.Market_sim.tick} every [tick_interval] through {!mutate},
