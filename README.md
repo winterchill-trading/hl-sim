@@ -42,6 +42,7 @@ dune exec hl-sim -- -port 3000
 | `-anchor-noise` | 0 | noise traders kept on anchored coins |
 | `-anchor-price-factor`, `-anchor-size-factor` | 1 | scale reference prices and sizes |
 | `-anchor-status-interval-s` | 10 | log each anchor's status this often (0: never) |
+| `-l2-interval-ms` | 500 | minimum time between two `l2Book` pushes |
 | `-taker-fee-bps`, `-maker-fee-bps` | 4.5, 1.5 | trading fees (Hyperliquid's base perps tier) |
 | `-leaders` | 0 | leader accounts for copy trading (see [Copy trading](#copy-trading)) |
 | `-leaders-seed` | `-seed` | seed of the leaders' parameters |
@@ -213,7 +214,8 @@ websocat ws://localhost:3000/ws
 
 Every (un)subscribe is answered with a `subscriptionResponse` echo and `ping` with
 `{"channel": "pong"}`. `l2Book` subscriptions get a snapshot immediately, then a new
-snapshot after changes to that book, at most every 50ms. `userFills` starts with an
+snapshot after changes to that book: 50ms (one block) after a quiet spell, then at most
+every 500ms (`-l2-interval-ms`), like Hyperliquid's per-block pushes at least 0.5 s apart. `userFills` starts with an
 `isSnapshot: true` message; `allMids` starts with a snapshot and repeats every second.
 `trades`, `orderUpdates` and `userFills` are pushed as events happen.
 

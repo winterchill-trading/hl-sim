@@ -177,6 +177,11 @@ let command =
          "-leader-balance"
          (optional_with_default (Usd.to_string Leaders.Config.default.balance) string)
          ~doc:"USD deposited into each leader (default 100000)"
+     and l2_interval_ms =
+       flag
+         "-l2-interval-ms"
+         (optional_with_default 500 int)
+         ~doc:"MS minimum time between two l2Book pushes (default 500, as Hyperliquid)"
      and taker_fee_bps =
        flag
          "-taker-fee-bps"
@@ -234,6 +239,7 @@ let command =
              ; response_delay = Time_ns.Span.of_int_ms response_delay_ms
              ; strict_signatures
              ; is_mainnet = mainnet_domain
+             ; l2_book_interval = Time_ns.Span.of_int_ms l2_interval_ms
              }
            exchange
        in
