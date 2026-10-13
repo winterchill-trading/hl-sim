@@ -188,8 +188,8 @@ let%expect_test "rejections" =
   [%expect
     {|
     (Error "Order has invalid size. asset=0")
-    (Error "Order has invalid price. asset=0")
-    (Error "Order has invalid price. asset=0")
+    (Error "Price must be divisible by tick size. asset=0")
+    (Error "Price must be divisible by tick size. asset=0")
     (Resting (oid 4) (cloid ()))
     (Error "Insufficient margin to place order. asset=0")
     (Error

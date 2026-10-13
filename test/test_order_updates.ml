@@ -66,7 +66,7 @@ let%expect_test "rejected orders reach orderUpdates with Hyperliquid's statuses"
     {"channel":"orderUpdates","data":[{"order":{"coin":"BTC","side":"B","limitPx":"100000","sz":"0.01","oid":2,"timestamp":1700000000000,"origSz":"0.01"},"status":"badAloPxRejected","statusTimestamp":1700000000000}]}
     {"status":"ok","response":{"type":"order","data":{"statuses":[{"error":"Order could not immediately match against any resting orders. asset=0"}]}}}
     {"channel":"orderUpdates","data":[{"order":{"coin":"BTC","side":"B","limitPx":"99000","sz":"0.01","oid":3,"timestamp":1700000000000,"origSz":"0.01"},"status":"iocCancelRejected","statusTimestamp":1700000000000}]}
-    {"status":"ok","response":{"type":"order","data":{"statuses":[{"error":"Order has invalid price. asset=0"}]}}}
+    {"status":"ok","response":{"type":"order","data":{"statuses":[{"error":"Price must be divisible by tick size. asset=0"}]}}}
     {"channel":"orderUpdates","data":[{"order":{"coin":"BTC","side":"B","limitPx":"99000.05","sz":"0.01","oid":4,"timestamp":1700000000000,"origSz":"0.01"},"status":"tickRejected","statusTimestamp":1700000000000}]}
     |}];
   Pipe.close outgoing;

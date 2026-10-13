@@ -61,7 +61,9 @@ let reject_message meta ?coin (reason : Neutral.Reject_reason.t) =
     sprintf "Unknown coin %s." (Option.value_map coin ~default:"?" ~f:Coin.to_string)
   | Unsupported msg -> msg
   | Invalid_size -> "Order has invalid size." ^ suffix
-  | Invalid_price -> "Order has invalid price." ^ suffix
+  (* Hyperliquid's documented text for its [Tick] error; the engine's [Invalid_price] also
+     covers the significant-figure limit, for which no separate text is documented. *)
+  | Invalid_price -> "Price must be divisible by tick size." ^ suffix
   | Duplicate_client_order_id -> "Duplicate cloid." ^ suffix
   | Reduce_only_would_increase -> "Reduce only order would increase position." ^ suffix
   | Below_min_value { min } ->
