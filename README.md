@@ -315,7 +315,7 @@ after fees:
 | random-8 | -2629 | -1426 |
 | random-2 | -2812 | -1277 |
 
-The same seed gives the same ranking on every run. Across seeds 1 to 5 at least four of
+The same seed gives the same ranking on every run. Across seeds 1 to 5 at least three of
 the six trend and mean-reversion leaders end positive; a random leader occasionally
 ends a short run slightly up.
 
