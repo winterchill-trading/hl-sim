@@ -41,6 +41,7 @@ module Row = struct
     { address : Address.t
     ; account_value : Usd.t
     ; windows : (Window.t * Performance.t) list
+    ; display_name : string option
     }
   [@@deriving sexp_of]
 end
@@ -70,6 +71,7 @@ type t =
   { sample_interval : int
   ; accounts : account Address.Table.t
   ; mutable last_sample : int option
+  ; display_names : string Address.Table.t
   }
 
 let retention = 31 * ns_per_day
@@ -78,6 +80,7 @@ let create ?(sample_interval = Time_ns.Span.minute) () =
   { sample_interval = Time_ns.Span.to_int_ns sample_interval
   ; accounts = Address.Table.create ()
   ; last_sample = None
+  ; display_names = Address.Table.create ()
   }
 ;;
 
@@ -90,6 +93,8 @@ let record_deposit t address usd =
   let a = account t address in
   a.deposits <- Usd.(a.deposits + usd)
 ;;
+
+let set_display_name t address name = Hashtbl.set t.display_names ~key:address ~data:name
 
 let record_volume t address usd =
   let a = account t address in
@@ -173,6 +178,7 @@ let rows t ex =
             | Some len -> sample_at a (now_time - len)
           in
           w, performance now start)
+    ; display_name = Hashtbl.find t.display_names address
     })
   |> List.sort ~compare:(fun (a : Row.t) b ->
     match Usd.compare b.account_value a.account_value with
@@ -208,7 +214,9 @@ let to_json rows =
                               ]
                           ])) )
                ; "prize", `Int 0
-               ; "displayName", `Null
+               ; ( "displayName"
+                 , Option.value_map r.display_name ~default:`Null ~f:(fun n -> `String n)
+                 )
                ])) )
     ]
 ;;

@@ -74,14 +74,16 @@ let%expect_test "windows over a simulated week" =
        ((Day ((pnl 136.9525) (roi 0.00091278846954927922) (vlm 10000)))
         (Week ((pnl 174.4525) (roi 0.0011630166666666665) (vlm 20000)))
         (Month ((pnl 174.4525) (roi 0.0011630166666666665) (vlm 20000)))
-        (All_time ((pnl 174.4525) (roi 0.0011630166666666665) (vlm 20000))))))
+        (All_time ((pnl 174.4525) (roi 0.0011630166666666665) (vlm 20000)))))
+      (display_name ()))
      ((address 0x00000000000000000000000000000000000000a0)
       (account_value 99816.5475)
       (windows
        ((Day ((pnl -141.4525) (roi -0.0014151193501270533) (vlm 10000)))
         (Week ((pnl -183.4525) (roi -0.0018345249999999998) (vlm 20000)))
         (Month ((pnl -183.4525) (roi -0.0018345249999999998) (vlm 20000)))
-        (All_time ((pnl -183.4525) (roi -0.0018345249999999998) (vlm 20000)))))))
+        (All_time ((pnl -183.4525) (roi -0.0018345249999999998) (vlm 20000)))))
+      (display_name ())))
     |}];
   let json = Rankings.to_json rows in
   print_endline (Yojson.Safe.pretty_to_string json);

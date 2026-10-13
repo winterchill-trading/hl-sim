@@ -32,6 +32,9 @@ val create : ?sample_interval:Time_ns.Span.t -> unit -> t
 (** A deposit (or withdrawal, negative) into [account]: not PnL. *)
 val record_deposit : t -> Address.t -> Usd.t -> unit
 
+(** The row's [displayName] (otherwise [null]). *)
+val set_display_name : t -> Address.t -> string -> unit
+
 (** Notional traded by [account] in one fill. *)
 val record_volume : t -> Address.t -> Usd.t -> unit
 
@@ -64,6 +67,7 @@ module Row : sig
     { address : Address.t
     ; account_value : Usd.t
     ; windows : (Window.t * Performance.t) list
+    ; display_name : string option
     }
   [@@deriving sexp_of]
 end
