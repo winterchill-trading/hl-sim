@@ -2,42 +2,44 @@
     ({!Exchange_core_engine.Exchange}, translated by {!Adapt}), speaking Hyperliquid's
     public API on a single port:
 
-    {ul
-     {- [POST /info]: an {!Hl_protocol.Info_request.t}, answered with the
-        {!Hl_protocol.Info_response.t} JSON ([null] for an unknown coin). [nSigFigs] and
-        [mantissa] are ignored.
-    }
-     {- [POST /exchange]: an {!Hl_protocol.Exchange_request.t} or a {!User_action.t},
-        answered with an {!Hl_protocol.Exchange_response.t}. Who acts:
-       - [approveAgent] and [approveBuilderFee] act for the address that signed them
-         (EIP-712, {!User_action.signer}); an agent's signature is refused. Unsigned, they
-         act for the [X-Address] header (or [Config.default_address]).
-       - an order, cancel or modify whose L1 signature recovers (testnet or mainnet
-         domain) to an approved agent acts for the agent's account; the agent's nonce is
-         checked ({!Agents.use_nonce}).
-       - anything else acts for the [X-Address] header if present, else the request's
-         [vaultAddress], else [Config.default_address]; its signature is not checked.
-
-       With [Config.strict_signatures], every request must be signed: an L1 action acts
-       for its signer (or the signer's account if it is an agent), recovered in the
-       [Config.is_mainnet] domain, and [X-Address] is ignored. An order action's [builder]
-       code ({!Builder}) must be approved by the account, at most 0.1%, for a builder with
-       at least $100; its fee is charged on every fill of those orders.
-    }
-     {- [GET /ws] with [Upgrade: websocket]: Hyperliquid's websocket protocol
-        ({!Hl_protocol.Ws_request.t} in, {!Hl_protocol.Ws_message.t} out), plus the
-        [activeAssetCtx] channel ({!Active_asset_ctx}), sent on subscribe and with every
-        [allMids] broadcast.
-    }
-    }
-
+    - [POST /info]: an {!Hl_protocol.Info_request.t}, answered with the
+      {!Hl_protocol.Info_response.t} JSON ([null] for an unknown coin). [nSigFigs] and
+      [mantissa] are ignored.
+    - [POST /exchange]: an {!Hl_protocol.Exchange_request.t} or a {!User_action.t},
+      answered with an {!Hl_protocol.Exchange_response.t}; see "Who acts" below.
+    - [GET /ws] with [Upgrade: websocket]: Hyperliquid's websocket protocol
+      ({!Hl_protocol.Ws_request.t} in, {!Hl_protocol.Ws_message.t} out), plus the
+      [activeAssetCtx] channel ({!Active_asset_ctx}), sent on subscribe and with every
+      [allMids] broadcast.
     - [GET /status]: {!status}.
 
     Malformed requests get status 400 and [{"error": "..."}].
 
-    Every address the server sees (as an acting address, an info [user] or a websocket
-    [user] subscription) is credited [Config.initial_balance] the first time, so clients
-    can trade without a deposit flow.
+    {2 Who acts}
+
+    - [approveAgent] and [approveBuilderFee] act for the address that signed them
+      (EIP-712, {!User_action.signer}); an agent's signature is refused, and the signer's
+      nonce is checked ({!Agents.use_nonce}). Unsigned, they act for the [X-Address]
+      header (or [Config.default_address]).
+    - An order, cancel or modify whose L1 signature recovers (testnet or mainnet domain)
+      to an approved agent acts for the agent's account; the agent's nonce is checked.
+    - Anything else acts for the [X-Address] header if present, else the request's
+      [vaultAddress], else [Config.default_address]; its signature is not checked.
+
+    With [Config.strict_signatures], every request must be signed: an L1 action acts for
+    its signer (or the signer's account if it is an agent), recovered in the
+    [Config.is_mainnet] domain, and [X-Address] is ignored.
+
+    An order action's [builder] code ({!Builder}) must be approved by the account, at most
+    0.1%, for a builder with at least $100 of account value (a builder is credited the
+    initial balance when first named, like any address, so only a builder that lost it is
+    refused); its fee is charged on every fill of those orders.
+
+    {2 Accounts and threading}
+
+    Every address the server sees (as an acting address, a builder, an info [user] or a
+    websocket [user] subscription) is credited [Config.initial_balance] the first time, so
+    clients can trade without a deposit flow.
 
     The exchange is owned by the server and mutated only from the Async scheduler thread;
     every mutation goes through {!mutate}, which advances the exchange clock and then
