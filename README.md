@@ -412,13 +412,23 @@ These live in `Adapt`; everything else is the engine's behaviour.
 - **Timestamps** are reported in milliseconds (the engine counts nanoseconds).
 - **Order statuses** follow Hyperliquid: `resting`, `filled` with total size and average
   price, or `error` with Hyperliquid's message and its ` asset=N` suffix where one exists.
-  Trigger orders are rejected (`Trigger orders are not supported.`), as are unknown asset
-  indices (`Asset N does not exist.`). A `modify` whose replacement is rejected by these
-  two checks leaves the target untouched.
+  Unknown asset indices are rejected (`Asset N does not exist.`); a `modify` whose
+  replacement names one leaves the target untouched.
+- **Trigger orders** (`{"trigger": {"isMarket", "triggerPx", "tpsl"}}`) answer `resting`
+  with their oid and wait off the book, holding no margin, until the mark price reaches
+  `triggerPx`: a sell stop-loss or a buy take-profit at or below it, a buy stop-loss or a
+  sell take-profit at or above it. They then become a GTC limit order at `limitPx`, or
+  with `isMarket` a market order with Hyperliquid's 10% slippage tolerance (measured from
+  the best opposite price), under the same oid and with every check done then.
+  `orderUpdates` reports `open`, then `triggered` followed by the placed order's own
+  updates; `openOrders` lists waiting trigger orders, `orderStatus` gives their
+  `orderType` (`Stop Market`, `Take Profit Limit`, ...), `triggerPx` and
+  `triggerCondition`; cancel, cancel by cloid, modify, scheduled cancels and liquidation
+  reach them. `normalTpsl` and `positionTpsl` grouping is not modelled.
 - **Fills** carry Hyperliquid's `dir` labels (`Open Long`, `Close Short`,
   `Long > Short`, ...), `feeToken` `USDC` and a placeholder hash derived from the trade
   id. A self-trade cancel is reported as `selfTradeCanceled` and a liquidation cancel as
-  `marginCanceled` in `orderUpdates`.
+  `liquidatedCanceled` in `orderUpdates`.
 - **Self-trade prevention** is Hyperliquid's: an order that reaches the same account's
   resting order cancels the resting one (`selfTradeCanceled` in `orderUpdates`, no fill,
   no fee, nothing in `trades`) and keeps matching behind it, so it may still fill, rest
