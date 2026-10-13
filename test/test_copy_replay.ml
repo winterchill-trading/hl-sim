@@ -119,12 +119,14 @@ let%expect_test "a copy-trading run replays from its engine journal" =
   done;
   let accounts = accounts sim leaders in
   let original = state ex accounts in
-  let journal = Engine_journal.to_string (Queue.to_list inputs) in
-  let replayed =
-    Engine_journal.replay
-      ~config:(Adapt.config ())
-      (ok_exn (Engine_journal.of_string journal))
+  (* The header carries the self-trade policy, which is not part of the config. *)
+  let journal =
+    Engine_journal.to_string
+      ~header:{ self_trade = Adapt.self_trade }
+      (Queue.to_list inputs)
   in
+  let header, journalled = ok_exn (Engine_journal.of_string_with_header journal) in
+  let replayed = Engine_journal.replay ~config:(Adapt.config ()) ~header journalled in
   print_s
     [%message
       ""
@@ -136,8 +138,8 @@ let%expect_test "a copy-trading run replays from its engine journal" =
         ~identical:(Sexp.equal original (state replayed accounts) : bool)];
   [%expect
     {|
-    ((inputs 127065) (follower_fills 32) (leader_position 1.026)
-     (follower_position 0.09084) (builder_equity 1000002.66124902)
+    ((inputs 126513) (follower_fills 69) (leader_position -2.06347)
+     (follower_position -0.24202) (builder_equity 1000005.49450626)
      (identical true))
     |}]
 ;;
