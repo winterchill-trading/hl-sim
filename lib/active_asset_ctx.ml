@@ -106,28 +106,37 @@ let open_interest exchange coin =
 let of_exchange exchange stats coin =
   match Exchange.instrument exchange coin, Exchange.mark exchange coin with
   | None, _ | _, None -> None
-  | Some _, Some mark ->
+  | Some instrument, Some mark ->
     let stats = Day_stats.find stats coin ~time:(Exchange.now exchange) in
     let book = Exchange.l2 ~n_levels:1 exchange coin in
-    let impact_pxs =
+    let mid_px =
       Option.bind book ~f:(fun (book : Exchange_core.L2.t) ->
         match book.bids, book.asks with
-        | bid :: _, ask :: _ -> Some (bid.px, ask.px)
+        | bid :: _, ask :: _ -> Some (Price.div_int Price.(bid.px + ask.px) 2)
         | _ -> None)
     in
-    let mid_px =
-      Option.map impact_pxs ~f:(fun (bid, ask) -> Price.div_int Price.(bid + ask) 2)
+    let impact_pxs =
+      match Exchange.impact_pxs exchange coin with
+      | Some bid, Some ask ->
+        let round = Exchange_core.Instrument.round_price instrument in
+        Some (round bid, round ask)
+      | _ -> None
     in
-    let oracle_px = mark in
+    let oracle_px = Option.value (Exchange.oracle exchange coin) ~default:mark in
+    let premium =
+      match Exchange.premium exchange coin with
+      | Some premium -> premium
+      | None ->
+        Option.value_map mid_px ~default:0. ~f:(fun mid ->
+          (Price.to_float mid -. Price.to_float oracle_px) /. Price.to_float oracle_px)
+    in
     { coin
     ; funding = Exchange.funding_rate exchange coin
     ; open_interest = open_interest exchange coin
     ; prev_day_px =
         Option.bind stats ~f:(fun s -> s.prev_day_px) |> Option.value ~default:mark
     ; day_ntl_vlm = Option.value_map stats ~default:Usd.zero ~f:(fun s -> s.ntl)
-    ; premium =
-        Option.value_map mid_px ~default:0. ~f:(fun mid ->
-          (Price.to_float mid -. Price.to_float oracle_px) /. Price.to_float oracle_px)
+    ; premium
     ; oracle_px
     ; mark_px = mark
     ; mid_px

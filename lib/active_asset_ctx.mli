@@ -14,12 +14,16 @@
     hl-protocol has no type for this channel yet, so it is defined here.
 
     How the simulator fills it in:
-    - [funding]: the engine's rate for the next funding boundary;
-    - [markPx]: the engine's mark; [oraclePx]: the same price, as the engine has no
-      separate oracle (the market simulation sets the mark to its reference price);
-    - [midPx] and [impactPxs]: book mid and best bid and ask ([null] and absent when the
-      book is one-sided; impact notional is ignored);
-    - [premium]: [(mid - oracle) / oracle], 0 without a mid;
+    - [funding]: the engine's rate for the next funding boundary (from the premium samples
+      once the coin has an oracle price);
+    - [markPx]: the engine's mark; [oraclePx]: the engine's oracle price
+      ({!Exchange_core_engine.Exchange.set_oracle}, which the market simulation publishes
+      every 3 s), or the mark for a coin without one (anchored runs, no simulation);
+    - [midPx]: the book mid ([null] when one-sided); [impactPxs]: the average prices of
+      selling and buying the impact notional (20,000 USDC for BTC and ETH, 6,000
+      otherwise) against the book, rounded to a valid price (absent when a side is empty);
+    - [premium]: the latest premium sample of the impact prices over the oracle, or
+      [(mid - oracle) / oracle] (0 without a mid) for a coin without an oracle;
     - [openInterest]: the sum of long positions;
     - [dayNtlVlm], [dayBaseVlm], [prevDayPx]: volume of the current UTC day of the
       exchange clock and the last trade price of the previous day (the mark if there was
