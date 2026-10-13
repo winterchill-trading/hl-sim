@@ -176,15 +176,6 @@ let%expect_test "rejections" =
     [%sexp
       (Adapt.place_order ex (addr 1) { (order Buy "1" "10") with asset = Asset.of_int 9 }
        : Order_status.t)];
-  print_s
-    [%sexp
-      (Adapt.place_order
-         ex
-         (addr 1)
-         { (order Buy "1" "10") with
-           order_type = Trigger { is_market = true; trigger_px = px "1"; tpsl = Sl }
-         }
-       : Order_status.t)];
   [%expect
     {|
     (Error "Order has invalid size. asset=0")
@@ -201,7 +192,6 @@ let%expect_test "rejections" =
     (Resting (oid 10) (cloid (0x00000000000000000000000000000007)))
     (Error "Duplicate cloid. asset=0")
     (Error "Asset 9 does not exist.")
-    (Error "Trigger orders are not supported.")
     |}]
 ;;
 

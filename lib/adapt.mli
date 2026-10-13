@@ -51,15 +51,19 @@ val meta : Exchange.t -> Meta.t
 
 (** {2 Exchange endpoint} *)
 
-(** Trigger orders and unknown assets are rejected here; everything else is placed on the
-    engine. *)
+(** Unknown assets are rejected here; everything else is placed on the engine. A trigger
+    order ([{"trigger": {"isMarket", "triggerPx", "tpsl"}}]) becomes an engine trigger
+    order ({!Exchange_core_engine.Exchange.place_trigger}) that fires on the mark price: a
+    limit order at [limitPx] (GTC), or with [isMarket] a market order with Hyperliquid's
+    10% slippage tolerance, measured from the best opposite price when it fires. It
+    answers [resting] with its order id. *)
 val place_order : Exchange.t -> Address.t -> Order_request.t -> Order_status.t
 
 (** [place_order], with the [orderUpdates] message Hyperliquid sends for an order the
     matching engine rejects: status ["badAloPxRejected"], ["iocCancelRejected"],
     ["minTradeNtlRejected"], ["perpMarginRejected"], ["reduceOnlyRejected"],
-    ["tickRejected"], ... ({!reject_status}). Front-end rejections (unknown asset, trigger
-    orders) have no order id and get none. *)
+    ["tickRejected"], ... ({!reject_status}). Front-end rejections (unknown asset) have no
+    order id and get none. *)
 val place_order_with_update
   :  Exchange.t
   -> Address.t
@@ -85,8 +89,9 @@ val market_order
 val cancel : Exchange.t -> Address.t -> Cancel_request.t -> Cancel_status.t
 val cancel_by_cloid : Exchange.t -> Address.t -> Cancel_by_cloid.t -> Cancel_status.t
 
-(** Cancels the target and places the replacement with a new oid. A replacement for an
-    unknown asset or a trigger order is rejected without cancelling the target. *)
+(** Cancels the target (a resting or trigger order) and places the replacement, which may
+    be a trigger order, with a new oid. A replacement for an unknown asset is rejected
+    without cancelling the target. *)
 val modify : Exchange.t -> Address.t -> Modify_request.t -> Order_status.t
 
 (** {2 Info endpoint} *)
@@ -134,3 +139,10 @@ val clearinghouse_state_of_view : Exchange_core.Account_view.t -> Clearinghouse_
     ["selfTradeCanceled"]. Rejections are not events with an order; see
     {!place_order_with_update}. *)
 val order_update : Exchange_core_engine.Event.t -> (Address.t * Order_update.t) option
+
+(** The [orderUpdates] message for a trigger order's owner: ["open"] when placed,
+    ["triggered"] when the mark reaches it (the placed order's own updates follow), and
+    the cancel statuses of {!order_update}. *)
+val trigger_order_update
+  :  Exchange_core_engine.Trigger_event.t
+  -> Address.t * Order_update.t

@@ -3,6 +3,8 @@ open! Hl_protocol
 module Exchange = Exchange_core_engine.Exchange
 module Event = Exchange_core_engine.Event
 module Execution = Exchange_core_engine.Execution
+module Trigger_event = Exchange_core_engine.Trigger_event
+module Trigger_order = Exchange_core_engine.Trigger_order
 module Direction = Exchange_core_engine.Position.Direction
 module Neutral = Exchange_core
 
@@ -200,6 +202,12 @@ let clearinghouse_state_of_view (v : Neutral.Account_view.t) : Clearinghouse_sta
   }
 ;;
 
+let cancelled_status : Event.Cancel_reason.t -> Order_update.Status.t = function
+  | User | Modified | Ioc_unfilled -> Canceled
+  | Self_trade -> Other "selfTradeCanceled"
+  | Liquidated -> Other "liquidatedCanceled"
+;;
+
 let order_update (event : Event.t) =
   let update account order status time =
     Some
@@ -210,14 +218,22 @@ let order_update (event : Event.t) =
   | Order_accepted { account; order; time } -> update account order Open time
   | Order_filled { account; order; time } -> update account order Filled time
   | Order_cancelled { account; order; reason; time } ->
-    let status : Order_update.Status.t =
-      match reason with
-      | User | Modified | Ioc_unfilled -> Canceled
-      | Self_trade -> Other "selfTradeCanceled"
-      | Liquidated -> Other "liquidatedCanceled"
-    in
-    update account order status time
+    update account order (cancelled_status reason) time
   | Order_rejected _ | Fill _ | Liquidation _ | Funding _ -> None
+;;
+
+let trigger_order_update (event : Trigger_event.t) =
+  let status : Order_update.Status.t =
+    match event.kind with
+    | Placed -> Open
+    | Triggered -> Triggered
+    | Cancelled reason -> cancelled_status reason
+  in
+  ( event.order.account
+  , { Order_update.order = open_order (Trigger_order.open_order event.order)
+    ; status
+    ; status_timestamp = ms event.time
+    } )
 ;;
 
 (* Exchange endpoint *)
@@ -229,29 +245,46 @@ let never_placed asset : Cancel_status.t =
        (Asset.to_int asset))
 ;;
 
-(* The engine request for a Hyperliquid order, or the rejection to record. *)
+(* Hyperliquid's market TP/SL orders have a 10% slippage tolerance (TP/SL docs). The
+   engine measures it from the best opposite price when the order fires. *)
+let trigger_market_slippage_bps = 1000
+
+(* The engine request for a Hyperliquid order (with its trigger, for a trigger order), or
+   the rejection to record. *)
 let neutral_request ex (req : Order_request.t)
-  : (Neutral.Order_request.t, Coin.t option * Neutral.Reject_reason.t * string) Result.t
+  : ( Neutral.Order_request.t * Neutral.Trigger.t option
+      , Coin.t option * Neutral.Reject_reason.t * string )
+      Result.t
   =
   match Meta.coin_of_asset (meta ex) req.asset with
   | None ->
     Error
       (None, Unknown_symbol, sprintf "Asset %d does not exist." (Asset.to_int req.asset))
   | Some coin ->
+    let request (order_type : Neutral.Order_type.t) : Neutral.Order_request.t =
+      { symbol = coin
+      ; side = Order_request.side req
+      ; size = req.sz
+      ; px = Some req.limit_px
+      ; order_type
+      ; reduce_only = req.reduce_only
+      ; client_order_id = req.cloid
+      }
+    in
     (match req.order_type with
-     | Trigger _ ->
-       let msg = "Trigger orders are not supported." in
-       Error (Some coin, Unsupported msg, msg)
-     | Limit { tif } ->
-       Ok
-         { symbol = coin
-         ; side = Order_request.side req
-         ; size = req.sz
-         ; px = Some req.limit_px
-         ; order_type = Limit tif
-         ; reduce_only = req.reduce_only
-         ; client_order_id = req.cloid
-         })
+     | Limit { tif } -> Ok (request (Limit tif), None)
+     | Trigger { is_market; trigger_px; tpsl } ->
+       let order_type : Neutral.Order_type.t =
+         if is_market
+         then Market { slippage_bps = Some trigger_market_slippage_bps }
+         else Limit Gtc
+       in
+       let kind : Neutral.Trigger.Kind.t =
+         match tpsl with
+         | Tp -> Take_profit
+         | Sl -> Stop_loss
+       in
+       Ok (request order_type, Some { Neutral.Trigger.trigger_px; kind }))
 ;;
 
 let reject_request ex address (req : Order_request.t) (coin, reason, msg) : Order_status.t
@@ -280,8 +313,12 @@ let reject_status : Neutral.Reject_reason.t -> Order_update.Status.t = function
 let place_order_with_update ex address (req : Order_request.t) =
   match neutral_request ex req with
   | Error rejection -> reject_request ex address req rejection, None
-  | Ok neutral ->
-    let oid, status = Exchange.place_with_order_id ex address neutral in
+  | Ok (neutral, trigger) ->
+    let oid, status =
+      match trigger with
+      | None -> Exchange.place_with_order_id ex address neutral
+      | Some trigger -> Exchange.place_trigger ex address neutral trigger
+    in
     let update =
       match status with
       | Rejected reason ->
@@ -343,13 +380,13 @@ let cancel_by_cloid ex address (req : Cancel_by_cloid.t) =
 let modify ex address (req : Modify_request.t) =
   match neutral_request ex req.order with
   | Error rejection -> reject_request ex address req.order rejection
-  | Ok neutral ->
+  | Ok (neutral, trigger) ->
     let target : Exchange.Target.t =
       match req.oid with
       | Oid oid -> Order_id oid
       | Cloid cloid -> Client_order_id cloid
     in
-    Exchange.modify ex address target neutral
+    Exchange.modify ?trigger ex address target neutral
     |> order_status (meta ex) ~coin:(Some neutral.symbol)
 ;;
 
