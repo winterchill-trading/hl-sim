@@ -438,6 +438,11 @@ These live in `Adapt`; everything else is the engine's behaviour.
   or be IOC-cancelled. It is never rejected for self-trade
   (`Adapt.self_trade = Expire_maker`).
 - **Market orders** use 5% slippage, as Hyperliquid's SDKs send them.
+- **Margin tiers** are Hyperliquid's mainnet ones: BTC 40x up to 150M USDC of notional
+  then 20x, ETH 25x up to 100M then 15x, SOL 20x up to 70M then 10x. Maintenance margin
+  follows the tier formula, `updateLeverage` refuses a leverage above the tier of the
+  current position, and `meta` carries `marginTables` and each asset's `marginTableId`
+  (tiered tables are numbered from 51 by the simulator).
 - **Liquidations** go through the book as on Hyperliquid: an account below maintenance
   margin has its orders cancelled (`liquidatedCanceled`) and sends reduce-only market
   orders for its positions (20% slices above 100,000 USDC, the whole position within 30 s
