@@ -438,6 +438,15 @@ These live in `Adapt`; everything else is the engine's behaviour.
   or be IOC-cancelled. It is never rejected for self-trade
   (`Adapt.self_trade = Expire_maker`).
 - **Market orders** use 5% slippage, as Hyperliquid's SDKs send them.
+- **Liquidations** go through the book as on Hyperliquid: an account below maintenance
+  margin has its orders cancelled (`liquidatedCanceled`) and sends reduce-only market
+  orders for its positions (20% slices above 100,000 USDC, the whole position within 30 s
+  of a slice); below two thirds of maintenance the backstop moves its positions and
+  remaining margin to the liquidator account
+  `0x000000000000000000000000000000000000ffff`. Fills of liquidation orders carry
+  `liquidation` (`liquidatedUser`, `markPx`, `method: "market"`) on both sides, and the
+  liquidated account's `userEvents` get a `liquidation` event. Backstop takeovers produce
+  no fills.
 - **Oracle, mark and funding.** With the market simulation, the reference walk is the
   oracle price, published every 3 s (`-oracle-interval-ms`); the engine derives the mark
   as Hyperliquid's median of the oracle plus the 150 s average premium of the mid, the
