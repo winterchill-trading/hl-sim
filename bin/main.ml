@@ -177,6 +177,16 @@ let command =
          "-leader-balance"
          (optional_with_default (Usd.to_string Leaders.Config.default.balance) string)
          ~doc:"USD deposited into each leader (default 100000)"
+     and taker_fee_bps =
+       flag
+         "-taker-fee-bps"
+         (optional_with_default Adapt.base_fees.taker_bps float)
+         ~doc:"BPS taker fee (default 4.5, Hyperliquid's base perps tier)"
+     and maker_fee_bps =
+       flag
+         "-maker-fee-bps"
+         (optional_with_default Adapt.base_fees.maker_bps float)
+         ~doc:"BPS maker fee (default 1.5)"
      and strict_signatures =
        flag
          "-strict-signatures"
@@ -197,7 +207,11 @@ let command =
      fun () ->
        Log.Global.set_output [ Log.Output.stderr () ];
        Log.Global.set_level log_level;
-       let exchange = Adapt.create_exchange () in
+       let exchange =
+         Adapt.create_exchange
+           ~fees:{ taker_bps = taker_fee_bps; maker_bps = maker_fee_bps }
+           ()
+       in
        Option.iter input_journal ~f:(fun path ->
          let journal = Exchange_core_engine.Journal.create path in
          Exchange_core_engine.Journal.attach journal exchange;

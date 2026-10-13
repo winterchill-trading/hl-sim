@@ -42,6 +42,7 @@ dune exec hl-sim -- -port 3000
 | `-anchor-noise` | 0 | noise traders kept on anchored coins |
 | `-anchor-price-factor`, `-anchor-size-factor` | 1 | scale reference prices and sizes |
 | `-anchor-status-interval-s` | 10 | log each anchor's status this often (0: never) |
+| `-taker-fee-bps`, `-maker-fee-bps` | 4.5, 1.5 | trading fees (Hyperliquid's base perps tier) |
 | `-leaders` | 0 | leader accounts for copy trading (see [Copy trading](#copy-trading)) |
 | `-leaders-seed` | `-seed` | seed of the leaders' parameters |
 | `-leader-balance` | 100000 | USD deposited into each leader |
@@ -365,7 +366,9 @@ These live in `Adapt`; everything else is the engine's behaviour.
 - **Universe.** BTC (szDecimals 5, 40x), ETH (4, 25x), SOL (2, 20x), asset indices in
   that order. Each becomes an `Exchange_core.Instrument` with size step
   `10^-szDecimals`, price tick `10^-(6 - szDecimals)`, at most 5 significant figures
-  (integers always allowed) and the base fee tier (taker 3.5 bps, maker 1 bp).
+  (integers always allowed) and Hyperliquid's base perps fee tier (taker 4.5 bps, maker
+  1.5 bps; `-taker-fee-bps` and `-maker-fee-bps` change it, and an input journal then
+  replays with `Adapt.config ~fees ()`).
 - **Timestamps** are reported in milliseconds (the engine counts nanoseconds).
 - **Order statuses** follow Hyperliquid: `resting`, `filled` with total size and average
   price, or `error` with Hyperliquid's message and its ` asset=N` suffix where one exists.
