@@ -394,7 +394,15 @@ let modify ex address (req : Modify_request.t) =
 
 let l2_book ?n_levels ex coin = Exchange.l2 ?n_levels ex coin |> Option.map ~f:l2
 let all_mids ex = Exchange.mids ex
-let open_orders ex address = List.map (Exchange.open_orders ex address) ~f:open_order
+
+let open_orders ex address =
+  Exchange.open_orders ex address
+  @ List.map (Exchange.trigger_orders ex address) ~f:Trigger_order.open_order
+  |> List.sort ~compare:(fun (a : Neutral.Open_order.t) b ->
+    Neutral.Order_id.compare b.order_id a.order_id)
+  |> List.map ~f:open_order
+;;
+
 let user_fills ex address = List.map (Exchange.fills ex address) ~f:user_fill
 
 let clearinghouse_state ex address =

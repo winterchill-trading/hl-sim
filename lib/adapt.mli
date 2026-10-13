@@ -99,7 +99,7 @@ val modify : Exchange.t -> Address.t -> Modify_request.t -> Order_status.t
 val l2_book : ?n_levels:int -> Exchange.t -> Coin.t -> L2_book.t option
 val all_mids : Exchange.t -> All_mids.t
 
-(** Resting orders, newest first. *)
+(** Resting and trigger orders, newest first. *)
 val open_orders : Exchange.t -> Address.t -> Open_order.t list
 
 (** Fills, newest first. *)
