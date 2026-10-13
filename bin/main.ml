@@ -36,9 +36,12 @@ let command =
     ~summary:"Hyperliquid exchange simulator"
     ~readme:(fun () ->
       "Serves POST /info, POST /exchange and the websocket API (GET /ws) on one port. \
-       Signatures are not checked: the acting address is the X-Address header, else the \
-       request's vaultAddress, else 0x0000000000000000000000000000000000000001. Every \
-       address is credited -initial-balance USD on first use.")
+       Approvals (approveAgent, approveBuilderFee) act for the address that signed them; \
+       orders signed by an approved agent act for its account. Otherwise signatures are \
+       not checked (unless -strict-signatures): the acting address is the X-Address \
+       header, else the request's vaultAddress, else \
+       0x0000000000000000000000000000000000000001. Every address is credited \
+       -initial-balance USD on first use.")
     (let%map_open.Command port =
        flag "-port" (optional_with_default 3000 int) ~doc:"PORT HTTP and websocket port"
      and seed =
@@ -157,6 +160,34 @@ let command =
          ~doc:
            "FILE write every engine input (client requests, noise traders, anchors) to \
             FILE, a binary journal that replays the whole run"
+     and leaders =
+       flag
+         "-leaders"
+         (optional_with_default 0 int)
+         ~doc:
+           "N run N leader accounts (trend, mean-reversion, random) for copy trading; \
+            they need the market simulation or an anchor for prices"
+     and leaders_seed =
+       flag
+         "-leaders-seed"
+         (optional int)
+         ~doc:"N seed of the leaders' parameters (default: -seed)"
+     and leader_balance =
+       flag
+         "-leader-balance"
+         (optional_with_default (Usd.to_string Leaders.Config.default.balance) string)
+         ~doc:"USD deposited into each leader (default 100000)"
+     and strict_signatures =
+       flag
+         "-strict-signatures"
+         no_arg
+         ~doc:" require a valid signature on every /exchange request and ignore X-Address"
+     and mainnet_domain =
+       flag
+         "-mainnet-signatures"
+         no_arg
+         ~doc:
+           " with -strict-signatures, check the mainnet signing domain (default testnet)"
      and log_level =
        flag
          "-log-level"
@@ -187,6 +218,8 @@ let command =
              { Server.Config.default with
                initial_balance = Usd.of_string initial_balance
              ; response_delay = Time_ns.Span.of_int_ms response_delay_ms
+             ; strict_signatures
+             ; is_mainnet = mainnet_domain
              }
            exchange
        in
@@ -213,6 +246,21 @@ let command =
            Some sim)
          else None
        in
+       if leaders > 0
+       then (
+         let leaders =
+           Leaders.create
+             { Leaders.Config.default with
+               seed = Option.value leaders_seed ~default:seed
+             ; count = leaders
+             ; coins = Option.value coins ~default:[]
+             ; balance = Usd.of_string leader_balance
+             }
+             exchange
+         in
+         List.iter (Leaders.leaders leaders) ~f:(fun l ->
+           Log.Global.info_s [%message "leader" ~_:(l : Leaders.Leader.t)]);
+         Server.run_leaders server leaders);
        let anchor_config =
          { Anchoring.Config.levels = anchor_levels
          ; mark_interval = Time_ns.Span.of_int_ms anchor_mark_interval_ms
