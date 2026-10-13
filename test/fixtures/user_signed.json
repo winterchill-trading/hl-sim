@@ -1,0 +1,54 @@
+{
+ "user": "0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a",
+ "agent": "0x1563915e194d8cfba1943570603f7606a3115508",
+ "agent_named": {
+  "action": {
+   "type": "approveAgent",
+   "signatureChainId": "0x66eee",
+   "hyperliquidChain": "Testnet",
+   "agentAddress": "0x1563915e194D8CfBA1943570603F7606A3115508",
+   "agentName": "copy",
+   "nonce": 1700000000000
+  },
+  "nonce": 1700000000000,
+  "digest": "d1891a431a5b7f8ffb443f407891ac3f97bfd767cfd1e17d55a1b6aad34f2c60",
+  "signature": {
+   "r": "0xf8ca8a67bbf4c14cebc3c62083061af9478f3a75368bc35c69d2258b37ad8b70",
+   "s": "0x43e17dce95636a1934841efaa7d8a61db264c08a9558fd00430f2446a1c3a0e5",
+   "v": 28
+  }
+ },
+ "agent_unnamed": {
+  "action": {
+   "type": "approveAgent",
+   "signatureChainId": "0x66eee",
+   "hyperliquidChain": "Mainnet",
+   "agentAddress": "0x1563915e194D8CfBA1943570603F7606A3115508",
+   "nonce": 1700000000000
+  },
+  "nonce": 1700000000000,
+  "digest": "7c6adfa02c0b7601f64f7ac65e5f539e933440c5a3886230898f1373512b4947",
+  "signature": {
+   "r": "0x9873d8168dc8690e034e10c3e9e021a2791c670a2f1d9c4cfc56e36d76d63e53",
+   "s": "0x119bf62b991b66a077cc2060cc0b5709e5a572eb00972616c95b4fd42fbcfd27",
+   "v": 28
+  }
+ },
+ "builder_fee": {
+  "action": {
+   "type": "approveBuilderFee",
+   "signatureChainId": "0x66eee",
+   "hyperliquidChain": "Testnet",
+   "maxFeeRate": "0.01%",
+   "builder": "0x00000000000000000000000000000000000000bb",
+   "nonce": 1700000000001
+  },
+  "nonce": 1700000000001,
+  "digest": "b88af6eafb17a876a861d677393565d5ac53e256609168a8dd85c17f3bf105e0",
+  "signature": {
+   "r": "0xfae862e95ba7ea37cd9247a3d14cb4373de6efcbc8af5cd7c47c5b3da0a35e66",
+   "s": "0x18c96aa2159ea58c78db6643608deab3ecea1c38b23dcd6e9fe558ff52a073db",
+   "v": 28
+  }
+ }
+}
