@@ -4,6 +4,7 @@ open! Hl_protocol
 module Exchange = Exchange_core_engine.Exchange
 module Event = Exchange_core_engine.Event
 module Market_sim = Exchange_core_engine.Market_sim
+module Trigger_event = Exchange_core_engine.Trigger_event
 module Notional = Fixed_decimal.Product (Price) (Size) (Usd)
 
 module Config = struct
@@ -89,6 +90,8 @@ type t =
   ; scheduled_cancelled : Order_key.Hash_set.t
   (** orders cancelled by a scheduled cancel, until their update is published *)
   ; order_history : Order_update.t Order_key.Table.t (** latest update per order *)
+  ; trigger_history : Exchange_core_engine.Trigger_order.t Order_key.Table.t
+  (** every trigger order placed, for [orderStatus] *)
   ; cloid_history : Order_id.t Cloid.Table.t Address.Table.t
   ; mutable charging_builder_fees : bool
   (** builder fees move money through deposits, which are not deposits to the leaderboard *)
@@ -116,10 +119,10 @@ let fire_scheduled_cancels t =
       Hashtbl.update t.scheduled_cancel_fires account ~f:(function
         | Some (d, n) when d = day -> d, n + 1
         | _ -> day, 1);
-      List.iter (Exchange.open_orders t.exchange account) ~f:(fun o ->
-        Hash_set.add t.scheduled_cancelled (account, o.order_id);
+      List.iter (Adapt.open_orders t.exchange account) ~f:(fun o ->
+        Hash_set.add t.scheduled_cancelled (account, o.oid);
         ignore
-          (Exchange.cancel t.exchange account ~symbol:o.symbol o.order_id
+          (Exchange.cancel t.exchange account ~symbol:o.coin o.oid
            : Exchange_core.Cancel_status.t))))
 ;;
 
@@ -169,6 +172,7 @@ let create ?(config = Config.default) ?(now = wall_clock) ?journal exchange =
     ; scheduled_cancel_fires = Address.Table.create ()
     ; scheduled_cancelled = Order_key.Hash_set.create ()
     ; order_history = Order_key.Table.create ()
+    ; trigger_history = Order_key.Table.create ()
     ; cloid_history = Address.Table.create ()
     ; charging_builder_fees = false
     }
@@ -355,27 +359,49 @@ let remember_order t user (update : Order_update.t) =
 ;;
 
 let publish t =
-  let events = Exchange.drain_events t.exchange in
+  let numbered = Exchange.drain_numbered_events t.exchange in
+  let events = List.map numbered ~f:(fun (e : Event.Numbered.t) -> e.event) in
   if not (Hashtbl.is_empty t.builder_orders) then charge_builder_fees t events;
   List.iter events ~f:log_event;
+  let add_update updates (address, (update : Order_update.t)) =
+    let key = address, update.order.oid in
+    let update =
+      if Hash_set.mem t.scheduled_cancelled key
+      then (
+        Hash_set.remove t.scheduled_cancelled key;
+        { update with status = Other "scheduledCancel" })
+      else update
+    in
+    Map.add_multi updates ~key:address ~data:update
+  in
+  (* Trigger order updates go before the engine events numbered from their [before_seq]. *)
+  let pending_triggers = ref (Exchange.drain_trigger_events t.exchange) in
+  let add_trigger_updates updates ~before =
+    let due, rest =
+      List.split_while !pending_triggers ~f:(fun (e : Trigger_event.t) ->
+        e.before_seq <= before)
+    in
+    pending_triggers := rest;
+    List.fold due ~init:updates ~f:(fun updates (e : Trigger_event.t) ->
+      (match e.kind with
+       | Placed ->
+         Hashtbl.set
+           t.trigger_history
+           ~key:(e.order.account, e.order.order_id)
+           ~data:e.order
+       | Triggered | Cancelled _ -> ());
+      add_update updates (Adapt.trigger_order_update e))
+  in
   let trades, fills, updates =
     List.fold
-      events
+      numbered
       ~init:(Coin.Map.empty, Address.Map.empty, Address.Map.empty)
-      ~f:(fun (trades, fills, updates) event ->
+      ~f:(fun (trades, fills, updates) { seq; event } ->
         Option.iter (Event.book_symbol event) ~f:(Hash_set.add t.dirty_books);
+        let updates = add_trigger_updates updates ~before:seq in
         let updates =
           match Adapt.order_update event with
-          | Some (address, update) ->
-            let key = address, update.order.oid in
-            let update =
-              if Hash_set.mem t.scheduled_cancelled key
-              then (
-                Hash_set.remove t.scheduled_cancelled key;
-                { update with status = Other "scheduledCancel" })
-              else update
-            in
-            Map.add_multi updates ~key:address ~data:update
+          | Some update -> add_update updates update
           | None -> updates
         in
         match event with
@@ -398,6 +424,7 @@ let publish t =
           , updates )
         | _ -> trades, fills, updates)
   in
+  let updates = add_trigger_updates updates ~before:Int.max_value in
   Map.iteri trades ~f:(fun ~key:coin ~data ->
     broadcast t (Trades { coin }) (Trades (List.rev data)));
   Map.iteri fills ~f:(fun ~key:user ~data ->
@@ -450,9 +477,40 @@ let handle_info t (req : Info_request.t) =
     | None -> `Null)
 ;;
 
+(* The frontend view's order type and trigger fields of a trigger order. The order type
+   names are the frontend's; the [triggerCondition] wording is not documented. *)
+let trigger_fields (o : Exchange_core_engine.Trigger_order.t) =
+  let market =
+    match o.request.order_type with
+    | Market _ -> true
+    | Limit _ -> false
+  in
+  let order_type =
+    match o.trigger.kind, market with
+    | Stop_loss, true -> "Stop Market"
+    | Stop_loss, false -> "Stop Limit"
+    | Take_profit, true -> "Take Profit Market"
+    | Take_profit, false -> "Take Profit Limit"
+  in
+  let px = Price.to_string o.trigger.trigger_px in
+  [ "orderType", `String order_type
+  ; "isTrigger", `Bool true
+  ; "triggerPx", `String px
+  ; ( "triggerCondition"
+    , `String
+        (if Exchange_core.Trigger.fires_above o.trigger ~side:o.request.side
+         then "Price above " ^ px
+         else "Price below " ^ px) )
+  ; "children", `List []
+  ; "isPositionTpsl", `Bool false
+  ; "reduceOnly", `Bool o.request.reduce_only
+  ; "tif", `Null
+  ]
+;;
+
 (* [{"status": "order", "order": {"order": {...}, "status": "open", "statusTimestamp": ms}}]
    or [{"status": "unknownOid"}]; the order is the frontend view, with a limit order's
-   fixed trigger fields. *)
+   fixed trigger fields or a trigger order's own. *)
 let order_status t json =
   let user = Address.t_of_yojson (Json.member_exn json ~key:"user") in
   let oid =
@@ -465,20 +523,23 @@ let order_status t json =
   match Option.bind oid ~f:(fun oid -> Hashtbl.find t.order_history (user, oid)) with
   | None -> `Assoc [ "status", `String "unknownOid" ]
   | Some update ->
+    let extra =
+      match Hashtbl.find t.trigger_history (user, update.order.oid) with
+      | Some trigger_order -> trigger_fields trigger_order
+      | None ->
+        [ "orderType", `String "Limit"
+        ; "isTrigger", `Bool false
+        ; "triggerPx", `String "0.0"
+        ; "triggerCondition", `String "N/A"
+        ; "children", `List []
+        ; "isPositionTpsl", `Bool false
+        ; "reduceOnly", `Bool false
+        ; "tif", `Null
+        ]
+    in
     let order =
       match Open_order.yojson_of_t update.order with
-      | `Assoc fields ->
-        `Assoc
-          (fields
-           @ [ "orderType", `String "Limit"
-             ; "isTrigger", `Bool false
-             ; "triggerPx", `String "0.0"
-             ; "triggerCondition", `String "N/A"
-             ; "children", `List []
-             ; "isPositionTpsl", `Bool false
-             ; "reduceOnly", `Bool false
-             ; "tif", `Null
-             ])
+      | `Assoc fields -> `Assoc (fields @ extra)
       | json -> json
     in
     `Assoc
