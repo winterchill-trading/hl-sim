@@ -870,7 +870,23 @@ let start_periodic t =
   Clock_ns.every t.config.step_interval (fun () -> mutate t ~f:ignore)
 ;;
 
+(* Simulated accounts are funded by their creator; the first request naming them must not
+   credit them the initial balance again. *)
+let adopt t address ~display_name =
+  Hash_set.add t.seen address;
+  Rankings.set_display_name t.rankings address display_name
+;;
+
+let run_leaders t leaders =
+  List.iter (Leaders.leaders leaders) ~f:(fun (l : Leaders.Leader.t) ->
+    adopt t l.address ~display_name:(Leaders.Leader.display_name l));
+  Clock_ns.every (Leaders.config leaders).decision_interval (fun () ->
+    mutate t ~f:(fun _ -> Leaders.tick leaders))
+;;
+
 let run_market_sim t sim =
+  List.iteri (Market_sim.traders sim) ~f:(fun i address ->
+    adopt t address ~display_name:(sprintf "noise-%d" i));
   Clock_ns.every (Market_sim.config sim).tick_interval (fun () ->
     mutate t ~f:(fun _ -> Market_sim.tick sim))
 ;;

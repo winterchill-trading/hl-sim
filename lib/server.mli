@@ -192,8 +192,14 @@ val port : (Socket.Address.Inet.t, int) Cohttp_async.Server.t -> int
 val start_periodic : t -> unit
 
 (** Calls {!Exchange_core_engine.Market_sim.tick} every [tick_interval] through {!mutate},
-    so the resulting events reach websocket subscribers. *)
+    so the resulting events reach websocket subscribers. The noise traders are named
+    ["noise-<i>"] on the leaderboard and are not credited the initial balance. *)
 val run_market_sim : t -> Exchange_core_engine.Market_sim.t -> unit
+
+(** Calls {!Leaders.tick} every [decision_interval] through {!mutate}, and names the
+    leaders on the leaderboard (they are not credited the initial balance). Create the
+    leaders after the server, so that their deposits are not counted as PnL. *)
+val run_leaders : t -> Leaders.t -> unit
 
 (** Number of open websocket connections. *)
 val num_ws_connections : t -> int
