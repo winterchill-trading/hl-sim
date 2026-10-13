@@ -932,6 +932,58 @@ let resolve_user_action t ~x_address action ~signature =
        signer)
 ;;
 
+(* With ["a": false], a modify must not take liquidity: a GTC replacement becomes ALO
+   (rejected if it would cross) and an IOC one is refused. *)
+let modify_without_always_place action (req : Exchange_request.t) =
+  match req.action, Json.member action ~key:"a" with
+  | Modify ({ order; _ } as modify), Some (`Bool false) ->
+    (match order.order_type with
+     | Limit { tif = Gtc } ->
+       Ok
+         { req with
+           action =
+             Modify
+               { modify with order = { order with order_type = Limit { tif = Alo } } }
+         }
+     | Limit { tif = Alo } -> Ok req
+     | Limit { tif = Ioc } | Trigger _ ->
+       (* sim wording *)
+       Error "Modify without always-place needs an ALO or GTC replacement.")
+  | _ -> Ok req
+;;
+
+let handle_l1_json t ~x_address json (env : Exchange_envelope.t) action
+  : Exchange_response.t
+  =
+  match Extra_action.of_action_json action with
+  | Some extra ->
+    (match resolve_l1 t ~x_address env with
+     | Error msg -> Err msg
+     | Ok address -> handle_extra_action t address extra)
+  | None ->
+    let req = Exchange_request.t_of_yojson json in
+    (match modify_without_always_place action req with
+     | Error msg -> Err msg
+     | Ok req ->
+       let builder =
+         match req.action with
+         | Order _ -> Builder.of_action_json action
+         | Cancel _ | Cancel_by_cloid _ | Modify _ -> None
+       in
+       (match resolve_l1 t ~x_address env with
+        | Error msg -> Err msg
+        | Ok address -> handle_exchange ?builder t address req))
+;;
+
+let handle_envelope t ~x_address json action : Exchange_response.t =
+  let env = Exchange_envelope.t_of_yojson json in
+  match env.expires_after with
+  | Some expires_after when expires_after < now_ms t ->
+    (* sim wording; Hyperliquid also charges a rate-limit penalty *)
+    Err (sprintf "Action expired: expiresAfter %d is in the past." expires_after)
+  | Some _ | None -> handle_l1_json t ~x_address json env action
+;;
+
 let handle_exchange_json t ~x_address json : Exchange_response.t =
   let action = Json.member_exn json ~key:"action" in
   match User_action.of_action_json action with
@@ -944,23 +996,7 @@ let handle_exchange_json t ~x_address json : Exchange_response.t =
     (match resolve_user_action t ~x_address user_action ~signature with
      | Error msg -> Err msg
      | Ok address -> handle_user_action ?signature t address user_action)
-  | None ->
-    let env = Exchange_envelope.t_of_yojson json in
-    (match Extra_action.of_action_json action with
-     | Some extra ->
-       (match resolve_l1 t ~x_address env with
-        | Error msg -> Err msg
-        | Ok address -> handle_extra_action t address extra)
-     | None ->
-       let req = Exchange_request.t_of_yojson json in
-       let builder =
-         match req.action with
-         | Order _ -> Builder.of_action_json action
-         | Cancel _ | Cancel_by_cloid _ | Modify _ -> None
-       in
-       (match resolve_l1 t ~x_address env with
-        | Error msg -> Err msg
-        | Ok address -> handle_exchange ?builder t address req))
+  | None -> handle_envelope t ~x_address json action
 ;;
 
 let header_is req name value =
