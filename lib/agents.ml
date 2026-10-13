@@ -49,12 +49,13 @@ let agents t user =
   |> List.sort ~compare:(fun (a : Agent.t) b -> [%compare: string option] a.name b.name)
 ;;
 
-let approve_agent t ~user (action : User_action.Approve_agent.t) =
-  let agent = action.agent_address in
+let approve_agent t ~user ~agent ~name =
+  (* An empty name is the unnamed agent, as the SDK signs it. *)
+  let name = Option.filter name ~f:(fun n -> not (String.is_empty n)) in
   let current = Hashtbl.find t.agents user |> Option.value ~default:[] in
   let replaced, kept =
     List.partition_tf current ~f:(fun (a : Agent.t) ->
-      [%equal: string option] a.name action.agent_name)
+      [%equal: string option] a.name name)
   in
   let named = List.count kept ~f:(fun a -> Option.is_some a.name) in
   if Address.equal agent user
@@ -62,16 +63,13 @@ let approve_agent t ~user (action : User_action.Approve_agent.t) =
   else if Option.exists (owner t agent) ~f:(fun o -> not (Address.equal o user))
           || Hashtbl.mem t.agents agent
   then (* sim wording *) Error "Agent address is already in use."
-  else if Option.is_some action.agent_name && named >= max_named_agents
+  else if Option.is_some name && named >= max_named_agents
   then (* sim wording *) Error "Too many named agents: at most 3 per account."
   else (
     List.iter replaced ~f:(fun a -> Hashtbl.remove t.owners a.address);
     (* A re-approval of the same address keeps a single entry. *)
     let kept = List.filter kept ~f:(fun a -> not (Address.equal a.address agent)) in
-    Hashtbl.set
-      t.agents
-      ~key:user
-      ~data:({ name = action.agent_name; address = agent } :: kept);
+    Hashtbl.set t.agents ~key:user ~data:({ name; address = agent } :: kept);
     Hashtbl.set t.owners ~key:agent ~data:user;
     Ok ())
 ;;

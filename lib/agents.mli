@@ -23,11 +23,13 @@ type t
 
 val create : unit -> t
 
-(** [approve_agent t ~user action] registers [action.agent_address] for [user]. *)
+(** [approve_agent t ~user ~agent ~name] registers [agent] for [user] ([name] [None] for
+    the unnamed agent). *)
 val approve_agent
   :  t
   -> user:Address.t
-  -> User_action.Approve_agent.t
+  -> agent:Address.t
+  -> name:string option
   -> (unit, string) Result.t
 
 (** The account an agent signs for. *)

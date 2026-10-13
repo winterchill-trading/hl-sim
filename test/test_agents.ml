@@ -3,18 +3,7 @@ open! Hl_protocol
 open! Hl_sim
 
 let user = Helpers.addr 0x01
-
-let approve ?name t agent =
-  Agents.approve_agent
-    t
-    ~user
-    { signature_chain_id = "0x66eee"
-    ; hyperliquid_chain = "Testnet"
-    ; agent_address = Helpers.addr agent
-    ; agent_name = name
-    ; nonce = 0
-    }
-;;
+let approve ?name t agent = Agents.approve_agent t ~user ~agent:(Helpers.addr agent) ~name
 
 let show t =
   print_s
@@ -40,12 +29,8 @@ let%expect_test "one unnamed and three named agents" =
        (Agents.approve_agent
           t
           ~user:(Helpers.addr 0x02)
-          { signature_chain_id = "0x66eee"
-          ; hyperliquid_chain = "Testnet"
-          ; agent_address = Helpers.addr 0xa2
-          ; agent_name = None
-          ; nonce = 0
-          }));
+          ~agent:(Helpers.addr 0xa2)
+          ~name:None));
   show t;
   [%expect
     {|

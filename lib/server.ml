@@ -239,7 +239,7 @@ let charge_builder_fees t events =
             if Usd.is_positive fee
             then (
               Exchange.deposit t.exchange account (Usd.neg fee);
-              Exchange.deposit t.exchange builder.b fee))));
+              Exchange.deposit t.exchange builder.builder fee))));
   List.iter events ~f:(fun (event : Event.t) ->
     match event with
     | Order_filled { account; order; _ } | Order_cancelled { account; order; _ } ->
@@ -326,12 +326,13 @@ let handle_info t (req : Info_request.t) =
 
 (* Hyperliquid checks the builder code before placing any order of the action. *)
 let check_builder t ex address (builder : Builder.t) =
-  if builder.f < 0 || builder.f > Builder.max_perp_fee
+  if builder.fee_tenths_bp < 0 || builder.fee_tenths_bp > Builder.max_perp_fee
   then (* sim wording *) Error "Builder fee is above the 0.1% perps limit."
-  else if Agents.max_builder_fee t.agents ~user:address ~builder:builder.b < builder.f
+  else if Agents.max_builder_fee t.agents ~user:address ~builder:builder.builder
+          < builder.fee_tenths_bp
   then Error "Builder fee has not been approved."
   else if Usd.( < )
-            (Exchange.account_view ex builder.b).equity
+            (Exchange.account_view ex builder.builder).equity
             Builder.min_builder_account_value
   then (* sim wording *) Error "Builder has insufficient balance to be builder."
   else Ok ()
@@ -361,7 +362,7 @@ let handle_exchange ?builder t address (req : Exchange_request.t) : Exchange_res
     | Order { orders; grouping = _ } ->
       (match builder with
        | Some builder ->
-         ensure_account t builder.b;
+         ensure_account t builder.builder;
          place_with_builder t ex address builder orders
        | None ->
          Exchange_response.Ok (Order (List.map orders ~f:(Adapt.place_order ex address))))
@@ -387,18 +388,15 @@ let handle_user_action ?signature t address (action : User_action.t) : Exchange_
         (User_action { time = Exchange.now ex; address; user_action = action; signature }));
     let result =
       match action with
-      | Approve_agent approve -> Agents.approve_agent t.agents ~user:address approve
-      | Approve_builder_fee approve ->
+      | Approve_agent { agent_address; agent_name; _ } ->
+        Agents.approve_agent t.agents ~user:address ~agent:agent_address ~name:agent_name
+      | Approve_builder_fee { builder; max_fee_rate; _ } ->
         (* Funding the builder here, inside the journaled request, keeps replays exact. *)
-        ensure_account t approve.builder;
-        (match Builder.tenths_bps_of_rate approve.max_fee_rate with
-         | Error _ -> Error (sprintf "Invalid max fee rate %s." approve.max_fee_rate)
+        ensure_account t builder;
+        (match Builder.tenths_bps_of_rate max_fee_rate with
+         | Error _ -> Error (sprintf "Invalid max fee rate %s." max_fee_rate)
          | Ok tenths_bps ->
-           Agents.approve_builder_fee
-             t.agents
-             ~user:address
-             ~builder:approve.builder
-             ~tenths_bps)
+           Agents.approve_builder_fee t.agents ~user:address ~builder ~tenths_bps)
     in
     match result with
     | Ok () -> Exchange_response.Ok Default
