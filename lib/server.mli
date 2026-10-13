@@ -63,7 +63,9 @@ module Config : sig
     { initial_balance : Usd.t (** credited to each address on first use *)
     ; default_address : Address.t (** acting address when none is given *)
     ; l2_book_interval : Time_ns.Span.t
-    (** minimum spacing of [l2Book] updates per coin (coalescing) *)
+    (** minimum spacing of [l2Book] pushes (coalescing): a change after a quiet spell is
+        pushed 50ms later (one block), later ones at least this long after the previous
+        push *)
     ; all_mids_interval : Time_ns.Span.t (** period of [allMids] broadcasts *)
     ; step_interval : Time_ns.Span.t
     (** period of the clock step that charges funding and liquidates *)
@@ -84,9 +86,10 @@ module Config : sig
     }
   [@@deriving sexp_of]
 
-  (** $1,000,000, address [0x0000000000000000000000000000000000000001], 50ms, 1s, 1s, no
-      response delay, 10,000 queued websocket messages, signatures not required, testnet
-      domain, 10 users per websocket connection, 60 s websocket idle timeout. *)
+  (** $1,000,000, address [0x0000000000000000000000000000000000000001], 500ms
+      (Hyperliquid's cadence), 1s, 1s, no response delay, 10,000 queued websocket
+      messages, signatures not required, testnet domain, 10 users per websocket
+      connection, 60 s websocket idle timeout. *)
   val default : t
 end
 

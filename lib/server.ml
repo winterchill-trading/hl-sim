@@ -25,7 +25,7 @@ module Config = struct
   let default =
     { initial_balance = Usd.of_int 1_000_000
     ; default_address = Address.of_string "0x0000000000000000000000000000000000000001"
-    ; l2_book_interval = Time_ns.Span.of_int_ms 50
+    ; l2_book_interval = Time_ns.Span.of_int_ms 500
     ; all_mids_interval = Time_ns.Span.second
     ; step_interval = Time_ns.Span.second
     ; response_delay = Time_ns.Span.zero
@@ -72,6 +72,7 @@ type t =
   ; mutable num_ws_idle_closed : int
   ; dirty_books : Coin.Hash_set.t
   ; mutable l2_flush_scheduled : bool
+  ; mutable last_l2_flush : Time_ns.t
   ; journal : Journal.t option
   ; day_stats : Active_asset_ctx.Day_stats.t
   ; mutable on_clock_step : (now:int -> unit) list
@@ -155,6 +156,7 @@ let create ?(config = Config.default) ?(now = wall_clock) ?journal exchange =
     ; num_ws_idle_closed = 0
     ; dirty_books = Coin.Hash_set.create ()
     ; l2_flush_scheduled = false
+    ; last_l2_flush = Time_ns.epoch
     ; journal
     ; day_stats = Active_asset_ctx.Day_stats.create ()
     ; on_clock_step = []
@@ -266,6 +268,7 @@ let broadcast_web_data t =
 
 let flush_l2 t =
   t.l2_flush_scheduled <- false;
+  t.last_l2_flush <- Time_ns.now ();
   let coins = Hash_set.to_list t.dirty_books |> List.sort ~compare:Coin.compare in
   Hash_set.clear t.dirty_books;
   List.iter coins ~f:(fun coin ->
@@ -273,11 +276,18 @@ let flush_l2 t =
       broadcast t (L2_book { coin }) (L2_book book)))
 ;;
 
+let block_time = Time_ns.Span.of_int_ms 50
+
 let schedule_l2_flush t =
   if (not t.l2_flush_scheduled) && not (Hash_set.is_empty t.dirty_books)
   then (
     t.l2_flush_scheduled <- true;
-    Clock_ns.run_after t.config.l2_book_interval (fun () -> flush_l2 t) ())
+    (* Like Hyperliquid's blocks: the first change after a quiet spell goes out with the
+       next block (modelled as 50ms, which also lets the request's ack go out first),
+       later ones no sooner than [l2_book_interval] after the previous push. *)
+    let next = Time_ns.add t.last_l2_flush t.config.l2_book_interval in
+    let delay = Time_ns.Span.max block_time (Time_ns.diff next (Time_ns.now ())) in
+    Clock_ns.run_after delay (fun () -> flush_l2 t) ())
 ;;
 
 let log_event (event : Event.t) =
