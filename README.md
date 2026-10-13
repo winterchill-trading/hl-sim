@@ -42,6 +42,11 @@ dune exec hl-sim -- -port 3000
 | `-anchor-noise` | 0 | noise traders kept on anchored coins |
 | `-anchor-price-factor`, `-anchor-size-factor` | 1 | scale reference prices and sizes |
 | `-anchor-status-interval-s` | 10 | log each anchor's status this often (0: never) |
+| `-leaders` | 0 | leader accounts for copy trading (see [Copy trading](#copy-trading)) |
+| `-leaders-seed` | `-seed` | seed of the leaders' parameters |
+| `-leader-balance` | 100000 | USD deposited into each leader |
+| `-strict-signatures` | off | every `/exchange` request must be signed; `X-Address` is ignored |
+| `-mainnet-signatures` | off | with `-strict-signatures`, check the mainnet L1 signing domain |
 | `-log-level` | info | `debug`, `info`, `warn` or `error` |
 
 Logs go to stderr: fills and liquidations at `info`, every event, request detail and
@@ -51,12 +56,16 @@ The universe is BTC, ETH and SOL (asset indices 0, 1, 2; see `{"type": "meta"}`)
 
 ### Addresses and balances
 
-Signatures are not verified. The acting address of a `POST /exchange` request is, in
-order:
+The acting address of a `POST /exchange` request is, in order:
 
-1. the `X-Address` header,
-2. the request's `vaultAddress`,
-3. `0x0000000000000000000000000000000000000001`.
+1. for `approveAgent` and `approveBuilderFee`, the address that signed them (EIP-712);
+2. for an order, cancel or modify signed by an approved agent, the agent's account;
+3. the `X-Address` header,
+4. the request's `vaultAddress`,
+5. `0x0000000000000000000000000000000000000001`.
+
+Other signatures are not verified unless `-strict-signatures` is set (see
+[Copy trading](#copy-trading)).
 
 Every address the server sees (acting address, info `user`, websocket `user`) is
 credited `-initial-balance` USD the first time, so a client can trade without a deposit
@@ -75,6 +84,9 @@ curl -s localhost:3000/info -d '{"type": "userFills", "user": "0x000000000000000
 
 `nSigFigs` and `mantissa` are accepted but ignored. An unknown coin returns `null`.
 
+Also served: `maxBuilderFee`, `extraAgents`, `userFillsByTime` and `leaderboard` (see
+[Copy trading](#copy-trading)).
+
 ### Exchange
 
 ```sh
@@ -90,7 +102,8 @@ curl -s localhost:3000/exchange -H 'X-Address: 0x0000000000000000000000000000000
   "action": {"type": "cancel", "cancels": [{"a": 0, "o": 1}]}, "nonce": 2}'
 ```
 
-Supported actions: `order`, `cancel`, `cancelByCloid`, `modify`. Malformed bodies get
+Supported actions: `order` (with an optional `builder` code), `cancel`,
+`cancelByCloid`, `modify`, `approveAgent`, `approveBuilderFee`. Malformed bodies get
 status 400 and `{"error": "..."}`.
 
 ### Journal and replay
@@ -100,9 +113,12 @@ JSON object per line, before it is applied:
 
 ```json
 {"time":1700000000000000000,"address":"0x...","request":{"action":{...},"nonce":1}}
+{"time":1700000000000000000,"address":"0x...","request":{...},"builder":{"b":"0x...","f":10}}
+{"time":1700000000000000000,"address":"0x...","userAction":{"type":"approveAgent",...},"signature":{...}}
 ```
 
-`time` is the exchange clock in nanoseconds. `Journal.load` reads the file back and
+`time` is the exchange clock in nanoseconds and `address` the account that acted (for an
+agent-signed order, the agent's account), so replay needs no signatures. `Journal.load` reads the file back and
 `Server.replay` applies the entries to a fresh exchange, stepping the clock to each
 entry's time, which reproduces the original responses, fills and account state as long
 as nothing else traded (run with `-noise-traders 0`).
@@ -189,6 +205,8 @@ websocat ws://localhost:3000/ws
 {"method": "subscribe", "subscription": {"type": "userFills", "user": "0x00000000000000000000000000000000000000aa"}}
 {"method": "subscribe", "subscription": {"type": "allMids"}}
 {"method": "subscribe", "subscription": {"type": "activeAssetCtx", "coin": "BTC"}}
+{"method": "subscribe", "subscription": {"type": "webData2", "user": "0x00000000000000000000000000000000000000aa"}}
+{"method": "subscribe", "subscription": {"type": "userEvents", "user": "0x00000000000000000000000000000000000000aa"}}
 {"method": "ping"}
 ```
 
@@ -206,10 +224,75 @@ the mark to its reference price); day volumes cover the current UTC day of the e
 clock rather than a rolling 24 hours; `impactPxs` is the best bid and ask. A coin with no
 price yet gets only the `subscriptionResponse`.
 
+`webData2` (lite: `clearinghouseState`, `openOrders`, `serverTime`, `user`) is sent on
+subscribe and then every second; `userEvents` pushes `{"fills": [...]}` on channel
+`user` as the account trades (funding, liquidation and non-user-cancel events are not
+sent). User subscriptions work for any address, as on Hyperliquid. One connection
+follows at most 10 distinct users across `userFills`, `orderUpdates`, `webData2` and
+`userEvents`; the next one is answered with
+`{"channel": "error", "data": "Cannot track more than 10 total users."}` (Hyperliquid
+documents the limit; the wording is the simulator's).
+
 Each connection may have at most 10,000 messages waiting to be written
 (`Config.max_ws_queue`). A subscriber that stops reading falls behind once its socket
 buffers fill, and is then disconnected instead of being buffered without bound; other
 clients are not slowed down.
+
+### Copy trading
+
+The simulator supports the whole flow a copy-trading platform needs, without touching
+Hyperliquid.
+
+**Agents.** A user approves an API wallet with `approveAgent`, signed by the user's own
+key as EIP-712 typed data (`HyperliquidTransaction:ApproveAgent` in the
+`HyperliquidSignTransaction` domain; the chain id is taken from `signatureChainId`).
+Orders, cancels and modifies whose L1 signature recovers to that agent (testnet or
+mainnet phantom-agent domain) then act for the user. As on Hyperliquid: one unnamed and
+three named agents per account, a new unnamed agent (or a reused name) replaces the old
+one, an agent signs for one account, an agent cannot sign approvals, and nonces are
+tracked per signer (the 100 highest kept; a new nonce must be unused, above the smallest
+kept, and within two days before and one day after the server clock). `extraAgents`
+lists an account's agents.
+
+**Builder fees.** `approveBuilderFee` (signed by the user) sets the most a builder may
+charge, up to 1%; a rate of 0 revokes it, and an account approves at most 10 builders.
+An `order` action with `"builder": {"b": "0x...", "f": 10}` (tenths of a basis point)
+is refused unless the approval covers `f`, `f` is at most 100 (0.1%, the perps cap) and
+the builder has $100 of account value. The fee (`notional * f / 100000`) is moved from
+the user to the builder on every fill of those orders. `maxBuilderFee` returns the
+approved cap.
+
+**Following.** `userFills`, `orderUpdates`, `webData2` and `userEvents` work for any
+address. `userFillsByTime` returns an account's fills oldest first, at most 2000, for
+paging by time.
+
+**Leaderboard.** `POST /info {"type": "leaderboard"}`, and `GET /leaderboard` (also
+`/Mainnet/leaderboard` and `/Testnet/leaderboard`, the stats host's paths), return
+`{"leaderboardRows": [...]}` with `ethAddress`, `accountValue`, `displayName`, `prize`
+and `windowPerformances` (`pnl`, `roi`, `vlm` as strings for `day`, `week`, `month`,
+`allTime`) for every funded account. PnL is the change in account value net of
+deposits; windows roll and are resolved to one-minute samples of the exchange clock.
+
+**Leaders.** `-leaders N` runs N accounts that trade with fixed strategies: leader `i`
+is `0x1eade5` followed by `i` in hex, trades coin `i / 3` and follows trend
+(moving-average crossover), mean reversion or random entries for `i mod 3`, with
+leverage and averaging lengths drawn from `-leaders-seed`. Same flags, same leaders. They
+need prices, so run them with the market simulation or an anchor. On the leaderboard
+they are named `trend-0`, `mean-reversion-1`, ... and the noise traders `noise-<i>`.
+
+```sh
+dune exec hl-sim -- -port 3000 -leaders 9
+curl -s localhost:3000/leaderboard
+```
+
+**Strict signatures.** With `-strict-signatures` every `/exchange` request must carry a
+valid signature: L1 actions act for their signer (or the account of an approved agent)
+recovered in the testnet domain (`-mainnet-signatures` for mainnet), and `X-Address` is
+ignored. Without it, unsigned requests keep acting for `X-Address`, so existing clients
+work unchanged.
+
+The signature fixtures in `test/fixtures/user_signed.json` come from eth_account with
+throwaway keys (`user_signed.py` regenerates them).
 
 ## Build
 
@@ -264,7 +347,14 @@ are in the [exchange-core README](https://github.com/winterchill-trading/exchang
 | --- | --- |
 | `Adapt` | Hyperliquid view of the engine: default universe, instruments with Hyperliquid's price and size rules, asset index mapping, the exchange and info endpoints in hl-protocol types, error wording, `User_fill` with `dir` labels, `Trade`, `Order_update`, `Clearinghouse_state` |
 | `Active_asset_ctx` | the `activeAssetCtx` channel: payload from the engine, day volume stats, subscription requests (not in hl-protocol yet) |
-| `Journal` | JSON-lines journal of accepted `/exchange` requests, for replay |
+| `Journal` | JSON-lines journal of accepted `/exchange` requests and approvals, for replay |
+| `Eip712` | EIP-712 digests of user-signed actions and signer recovery |
+| `User_action` | `approveAgent` and `approveBuilderFee` (hl-protocol's `User_signed_action`) and their signers |
+| `Builder` | builder codes: the order field, fee amount, `maxFeeRate` parsing |
+| `Agents` | agents, per-signer nonces and builder approvals, with Hyperliquid's limits |
+| `User_channels` | the `webData2` and `userEvents` websocket channels |
+| `Rankings` | leaderboard rows from sampled account values, deposits and volume |
+| `Leaders` | leader accounts with trend, mean-reversion and random strategies |
 | `Anchoring` | price anchors: `-anchor` specs, the reference sources (live feed of the linked clients, raw files, event logs), the anchor wired to the server's clock and websocket, its status |
 | `Server` | cohttp-async server for `/info`, `/exchange` and the `/ws` websocket (async_websocket); owns the engine and drives its market simulation |
 
@@ -305,6 +395,11 @@ error messages, fills, `clearinghouseState`, events), a seeded market simulation
 Hyperliquid universe, and the HTTP and websocket server on a free port with a fixed
 clock. Engine tests (clearinghouse, properties) live in exchange-core, order book tests
 in order-book.
+Copy-trading tests: EIP-712 digests and signers against eth_account vectors, agent and
+builder limits, an agent-signed session with a builder fee replayed from the JSON
+journal, following a leader over the websocket, leaderboard windows, reproducible
+leaders, and a run with leaders, approvals and builder fees replayed bit for bit from
+the engine journal.
 Anchor tests: a simulator anchored live to another one serving as the reference, and an
 anchored run over the recorded minute in `test/fixtures` (copied from hl-client) whose
 engine journal replays to the same book, marks and client fills.
