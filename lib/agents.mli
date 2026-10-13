@@ -24,7 +24,8 @@ type t
 val create : unit -> t
 
 (** [approve_agent t ~user ~agent ~name] registers [agent] for [user] ([name] [None] for
-    the unnamed agent). *)
+    the unnamed agent). A name ending in [" valid_until <ms>"] names the agent by the part
+    before it and makes it expire at that time, as on Hyperliquid. *)
 val approve_agent
   :  t
   -> user:Address.t
@@ -32,18 +33,19 @@ val approve_agent
   -> name:string option
   -> (unit, string) Result.t
 
-(** The account an agent signs for. *)
-val owner : t -> Address.t -> Address.t option
+(** The account an agent signs for; [None] once the agent has expired at [now_ms]. *)
+val owner : ?now_ms:int -> t -> Address.t -> Address.t option
 
 module Agent : sig
   type t =
     { name : string option
     ; address : Address.t
+    ; valid_until : int option (** milliseconds *)
     }
   [@@deriving sexp_of]
 
   (** An [extraAgents] row: [{"name": "...", "address": "0x...", "validUntil": ...}]
-      ([validUntil] is far in the future, as agents do not expire in the simulator). *)
+      ([validUntil] is far in the future for an agent without expiry). *)
   val to_json : t -> Yojson.Safe.t
 end
 

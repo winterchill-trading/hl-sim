@@ -36,7 +36,9 @@ let%expect_test "one unnamed and three named agents" =
     {|
     (Ok ())
     (Ok ())
-    ((agents (((name ()) (address 0x00000000000000000000000000000000000000a2))))
+    ((agents
+      (((name ()) (address 0x00000000000000000000000000000000000000a2)
+        (valid_until ()))))
      (owner_a1 ()) (owner_a2 (0x0000000000000000000000000000000000000001)))
     (Ok ())
     (Ok ())
@@ -46,11 +48,30 @@ let%expect_test "one unnamed and three named agents" =
     (Error "Cannot approve the account itself as its agent.")
     (Error "Agent address is already in use.")
     ((agents
-      (((name ()) (address 0x00000000000000000000000000000000000000a2))
-       ((name (n0)) (address 0x00000000000000000000000000000000000000b5))
-       ((name (n1)) (address 0x00000000000000000000000000000000000000b2))
-       ((name (n2)) (address 0x00000000000000000000000000000000000000b3))))
+      (((name ()) (address 0x00000000000000000000000000000000000000a2)
+        (valid_until ()))
+       ((name (n0)) (address 0x00000000000000000000000000000000000000b5)
+        (valid_until ()))
+       ((name (n1)) (address 0x00000000000000000000000000000000000000b2)
+        (valid_until ()))
+       ((name (n2)) (address 0x00000000000000000000000000000000000000b3)
+        (valid_until ()))))
      (owner_a1 ()) (owner_a2 (0x0000000000000000000000000000000000000001)))
+    |}]
+;;
+
+let%expect_test "an agent named with valid_until expires" =
+  let t = Agents.create () in
+  ignore (approve t 0xa1 ~name:"copy valid_until 1700000000000" : (unit, string) Result.t);
+  print_s [%sexp (Agents.agents t user : Agents.Agent.t list)];
+  List.iter [ 1_699_999_999_999; 1_700_000_000_000 ] ~f:(fun now_ms ->
+    print_s [%sexp (Agents.owner ~now_ms t (Helpers.addr 0xa1) : Address.t option)]);
+  [%expect
+    {|
+    (((name (copy)) (address 0x00000000000000000000000000000000000000a1)
+      (valid_until (1700000000000))))
+    (0x0000000000000000000000000000000000000001)
+    ()
     |}]
 ;;
 

@@ -5,20 +5,33 @@ module Agent = struct
   type t =
     { name : string option
     ; address : Address.t
+    ; valid_until : int option
     }
   [@@deriving sexp_of]
 
-  (* Far enough ahead that clients treat the agent as permanent. *)
-  let valid_until = 4_102_444_800_000
+  (* Far enough ahead that clients treat an agent without expiry as permanent. *)
+  let no_expiry = 4_102_444_800_000
 
   let to_json t =
     `Assoc
       [ "name", `String (Option.value t.name ~default:"")
       ; "address", Address.yojson_of_t t.address
-      ; "validUntil", `Int valid_until
+      ; "validUntil", `Int (Option.value t.valid_until ~default:no_expiry)
       ]
   ;;
 end
+
+(* ["copy valid_until 1700000000000"] is the agent "copy" expiring at that time. *)
+let split_name name =
+  match String.substr_index name ~pattern:" valid_until " with
+  | None -> name, None
+  | Some i ->
+    let base = String.prefix name i in
+    let rest = String.drop_prefix name (i + String.length " valid_until ") in
+    (match Int.of_string_opt (String.strip rest) with
+     | Some ms -> base, Some ms
+     | None -> name, None)
+;;
 
 let max_named_agents = 3
 let max_builders = 10
@@ -41,7 +54,22 @@ let create () =
   }
 ;;
 
-let owner t agent = Hashtbl.find t.owners agent
+let find_agent t agent =
+  Option.bind (Hashtbl.find t.owners agent) ~f:(fun owner ->
+    Hashtbl.find t.agents owner
+    |> Option.bind ~f:(List.find ~f:(fun (a : Agent.t) -> Address.equal a.address agent))
+    |> Option.map ~f:(fun a -> owner, a))
+;;
+
+let owner ?now_ms t agent =
+  match find_agent t agent with
+  | Some (owner, { valid_until = Some until; _ }) ->
+    (match now_ms with
+     | Some now when now >= until -> None
+     | _ -> Some owner)
+  | Some (owner, _) -> Some owner
+  | None -> None
+;;
 
 let agents t user =
   Hashtbl.find t.agents user
@@ -51,7 +79,13 @@ let agents t user =
 
 let approve_agent t ~user ~agent ~name =
   (* An empty name is the unnamed agent, as the SDK signs it. *)
-  let name = Option.filter name ~f:(fun n -> not (String.is_empty n)) in
+  let name, valid_until =
+    match Option.filter name ~f:(fun n -> not (String.is_empty n)) with
+    | None -> None, None
+    | Some n ->
+      let base, until = split_name n in
+      Some base, until
+  in
   let current = Hashtbl.find t.agents user |> Option.value ~default:[] in
   let replaced, kept =
     List.partition_tf current ~f:(fun (a : Agent.t) ->
@@ -69,7 +103,7 @@ let approve_agent t ~user ~agent ~name =
     List.iter replaced ~f:(fun a -> Hashtbl.remove t.owners a.address);
     (* A re-approval of the same address keeps a single entry. *)
     let kept = List.filter kept ~f:(fun a -> not (Address.equal a.address agent)) in
-    Hashtbl.set t.agents ~key:user ~data:({ name; address = agent } :: kept);
+    Hashtbl.set t.agents ~key:user ~data:({ name; address = agent; valid_until } :: kept);
     Hashtbl.set t.owners ~key:agent ~data:user;
     Ok ())
 ;;

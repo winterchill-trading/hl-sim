@@ -924,7 +924,9 @@ let resolve_l1 t ~x_address (env : Exchange_envelope.t) =
     let signers = l1_signers t env signature in
     (match
        List.find_map signers ~f:(fun signer ->
-         Option.map (Agents.owner t.agents signer) ~f:(fun owner -> signer, owner))
+         Option.map
+           (Agents.owner ~now_ms:(now_ms t) t.agents signer)
+           ~f:(fun owner -> signer, owner))
      with
      | Some (agent, owner) ->
        let%map () = use_nonce t ~signer:agent ~nonce:env.nonce in
