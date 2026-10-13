@@ -4,6 +4,7 @@ open! Hl_protocol
 module Exchange = Exchange_core_engine.Exchange
 module Event = Exchange_core_engine.Event
 module Market_sim = Exchange_core_engine.Market_sim
+module Notional = Fixed_decimal.Product (Price) (Size) (Usd)
 
 module Config = struct
   type t =
@@ -72,6 +73,9 @@ type t =
   ; agents : Agents.t
   ; builder_orders : Builder.t Order_key.Table.t
   (** resting or just-filled orders placed with a builder code *)
+  ; rankings : Rankings.t
+  ; mutable charging_builder_fees : bool
+  (** builder fees move money through deposits, which are not deposits to the leaderboard *)
   }
 
 let wall_clock () = Time_ns.now () |> Time_ns.to_int_ns_since_epoch
@@ -84,6 +88,7 @@ let step_clock t =
   let now = t.now () in
   if now > Exchange.now t.exchange then Exchange.step t.exchange ~now;
   let now = Exchange.now t.exchange in
+  Rankings.sample t.rankings t.exchange;
   List.iter t.on_clock_step ~f:(fun f -> f ~now)
 ;;
 
@@ -115,8 +120,14 @@ let create ?(config = Config.default) ?(now = wall_clock) ?journal exchange =
     ; status = []
     ; agents = Agents.create ()
     ; builder_orders = Order_key.Table.create ()
+    ; rankings = Rankings.create ()
+    ; charging_builder_fees = false
     }
   in
+  Exchange.record_inputs exchange ~f:(function
+    | Deposit { account; usd } when not t.charging_builder_fees ->
+      Rankings.record_deposit t.rankings account usd
+    | _ -> ());
   step_clock t;
   ignore (Exchange.drain_events exchange : Event.t list);
   t
@@ -224,27 +235,31 @@ let log_event (event : Event.t) =
    the user's balance and credited to the builder. Both are plain deposits, so the
    engine's input journal replays them. Orders leave the table once filled or cancelled. *)
 let charge_builder_fees t events =
-  List.iter events ~f:(fun (event : Event.t) ->
-    match Event.executions event with
-    | None -> ()
-    | Some (taker, maker) ->
-      List.iter [ taker; maker ] ~f:(fun (e : Exchange_core_engine.Execution.t) ->
-        let account = e.settlement.account in
-        Option.iter
-          (Hashtbl.find
-             t.builder_orders
-             (account, Exchange_core_engine.Execution.order_id e))
-          ~f:(fun builder ->
-            let fee = Builder.fee builder ~px:e.fill.px ~sz:e.fill.sz in
-            if Usd.is_positive fee
-            then (
-              Exchange.deposit t.exchange account (Usd.neg fee);
-              Exchange.deposit t.exchange builder.builder fee))));
-  List.iter events ~f:(fun (event : Event.t) ->
-    match event with
-    | Order_filled { account; order; _ } | Order_cancelled { account; order; _ } ->
-      Hashtbl.remove t.builder_orders (account, order.order_id)
-    | _ -> ())
+  t.charging_builder_fees <- true;
+  Exn.protect
+    ~finally:(fun () -> t.charging_builder_fees <- false)
+    ~f:(fun () ->
+      List.iter events ~f:(fun (event : Event.t) ->
+        match Event.executions event with
+        | None -> ()
+        | Some (taker, maker) ->
+          List.iter [ taker; maker ] ~f:(fun (e : Exchange_core_engine.Execution.t) ->
+            let account = e.settlement.account in
+            Option.iter
+              (Hashtbl.find
+                 t.builder_orders
+                 (account, Exchange_core_engine.Execution.order_id e))
+              ~f:(fun builder ->
+                let fee = Builder.fee builder ~px:e.fill.px ~sz:e.fill.sz in
+                if Usd.is_positive fee
+                then (
+                  Exchange.deposit t.exchange account (Usd.neg fee);
+                  Exchange.deposit t.exchange builder.builder fee))));
+      List.iter events ~f:(fun (event : Event.t) ->
+        match event with
+        | Order_filled { account; order; _ } | Order_cancelled { account; order; _ } ->
+          Hashtbl.remove t.builder_orders (account, order.order_id)
+        | _ -> ()))
 ;;
 
 let publish t =
@@ -264,6 +279,9 @@ let publish t =
         in
         match event with
         | Fill { fill; taker; maker } ->
+          let notional = Notional.mul fill.px fill.sz in
+          Rankings.record_volume t.rankings fill.taker notional;
+          Rankings.record_volume t.rankings fill.maker notional;
           Active_asset_ctx.Day_stats.record_trade
             t.day_stats
             ~coin:fill.symbol
@@ -322,6 +340,40 @@ let handle_info t (req : Info_request.t) =
     match response with
     | Some r -> Info_response.yojson_of_t r
     | None -> `Null)
+;;
+
+let leaderboard t = Rankings.to_json (Rankings.rows t.rankings t.exchange)
+
+(* Info requests hl-protocol's [Info_request] does not model; [None] for the others. *)
+let handle_extra_info t json =
+  let user () = Address.t_of_yojson (Json.member_exn json ~key:"user") in
+  match Json.member json ~key:"type" with
+  | Some (`String "maxBuilderFee") ->
+    let builder = Address.t_of_yojson (Json.member_exn json ~key:"builder") in
+    Some (`Int (Agents.max_builder_fee t.agents ~user:(user ()) ~builder))
+  | Some (`String "extraAgents") ->
+    Some (`List (List.map (Agents.agents t.agents (user ())) ~f:Agents.Agent.to_json))
+  | Some (`String "leaderboard") -> Some (leaderboard t)
+  | Some (`String "userFillsByTime") ->
+    let req = User_fills_by_time.t_of_yojson json in
+    ensure_account t req.user;
+    let end_time = Option.value req.end_time ~default:Int.max_value in
+    (* Oldest first, so that the last fill's time is the next page's [startTime]. *)
+    let fills =
+      Adapt.user_fills t.exchange req.user
+      |> List.rev
+      |> List.filter ~f:(fun (f : User_fill.t) ->
+        f.time >= req.start_time && f.time <= end_time)
+      |> Fn.flip List.take User_fills_by_time.max_fills_per_response
+    in
+    Some (User_fills_by_time.yojson_of_response fills)
+  | _ -> None
+;;
+
+let handle_info_json t json =
+  match handle_extra_info t json with
+  | Some response -> response
+  | None -> handle_info t (Info_request.t_of_yojson json)
 ;;
 
 (* Hyperliquid checks the builder code before placing any order of the action. *)
@@ -689,7 +741,10 @@ let ws_upgrade t req =
 
 let handler t ~body _addr req =
   match Cohttp.Request.meth req, Uri.path (Cohttp.Request.uri req) with
-  | `POST, "/info" -> with_body body ~decode:Info_request.t_of_yojson ~f:(handle_info t)
+  | `POST, "/info" -> with_body body ~decode:Fn.id ~f:(handle_info_json t)
+  (* The stats host's path, for clients pointed at the simulator as their stats URL. *)
+  | `GET, ("/leaderboard" | "/Mainnet/leaderboard" | "/Testnet/leaderboard") ->
+    respond_json (leaderboard t)
   | `POST, "/exchange" ->
     let%bind response =
       with_body body ~decode:Fn.id ~f:(fun json ->

@@ -4,7 +4,11 @@
 
     - [POST /info]: an {!Hl_protocol.Info_request.t}, answered with the
       {!Hl_protocol.Info_response.t} JSON ([null] for an unknown coin). [nSigFigs] and
-      [mantissa] are ignored.
+      [mantissa] are ignored. Also [maxBuilderFee] (the approved cap in tenths of a bp),
+      [extraAgents] (the account's agents), [userFillsByTime] (oldest first, at most 2000)
+      and [leaderboard] ({!Rankings}).
+    - [GET /leaderboard] (also [/Mainnet/leaderboard] and [/Testnet/leaderboard], the
+      stats host's paths): the same leaderboard.
     - [POST /exchange]: an {!Hl_protocol.Exchange_request.t} or a {!User_action.t},
       answered with an {!Hl_protocol.Exchange_response.t}; see "Who acts" below.
     - [GET /ws] with [Upgrade: websocket]: Hyperliquid's websocket protocol
@@ -125,6 +129,13 @@ val publish_events : t -> unit
     (exposed for tests; the HTTP server calls these) *)
 
 val handle_info : t -> Info_request.t -> Yojson.Safe.t
+
+(** A [POST /info] body, including the requests {!Hl_protocol.Info_request} does not
+    model. Raises on a body that does not decode. *)
+val handle_info_json : t -> Yojson.Safe.t -> Yojson.Safe.t
+
+(** [{"leaderboardRows": [...]}] for every funded account ({!Rankings}). *)
+val leaderboard : t -> Yojson.Safe.t
 
 (** Applies an exchange request for [address], already authenticated. [builder] is the
     order action's builder code. *)
