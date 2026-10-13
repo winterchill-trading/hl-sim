@@ -7,7 +7,8 @@
       (the real message also carries spot balances, vault equities, asset contexts and
       more); sent on subscribe and then every second.
     - [{"type": "userEvents", "user": "0x..."}], channel ["user"]: [{"fills": [...]}] with
-      the account's fills as they happen ({!Hl_protocol.User_event}); funding, liquidation
+      the account's fills as they happen ({!Hl_protocol.User_event}), and
+      [{"liquidation": {...}}] when the account is liquidated (sent by {!Server}); funding
       and non-user-cancel events are not sent. *)
 
 open! Core

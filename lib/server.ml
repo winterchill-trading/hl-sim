@@ -90,6 +90,11 @@ type t =
   ; scheduled_cancelled : Order_key.Hash_set.t
   (** orders cancelled by a scheduled cancel, until their update is published *)
   ; order_history : Order_update.t Order_key.Table.t (** latest update per order *)
+  ; liquidation_orders : User_fill.Liquidation.t Order_key.Table.t
+  (** liquidation market orders, by the liquidated account and order id *)
+  ; liquidation_trades : User_fill.Liquidation.t Int.Table.t
+  (** trades of liquidation orders, by trade id: both sides' fills carry it *)
+  ; mutable next_lid : int
   ; trigger_history : Exchange_core_engine.Trigger_order.t Order_key.Table.t
   (** every trigger order placed, for [orderStatus] *)
   ; cloid_history : Order_id.t Cloid.Table.t Address.Table.t
@@ -172,6 +177,9 @@ let create ?(config = Config.default) ?(now = wall_clock) ?journal exchange =
     ; scheduled_cancel_fires = Address.Table.create ()
     ; scheduled_cancelled = Order_key.Hash_set.create ()
     ; order_history = Order_key.Table.create ()
+    ; liquidation_orders = Order_key.Table.create ()
+    ; liquidation_trades = Int.Table.create ()
+    ; next_lid = 1
     ; trigger_history = Order_key.Table.create ()
     ; cloid_history = Address.Table.create ()
     ; charging_builder_fees = false
@@ -227,6 +235,16 @@ let broadcast t sub msg =
 
 let send_json conn json = send_text conn (Yojson.Safe.to_string json)
 
+let broadcast_json t sub json =
+  let subscribers =
+    Hashtbl.data t.conns |> List.filter ~f:(fun (c : Conn.t) -> Set.mem c.subs sub)
+  in
+  if not (List.is_empty subscribers)
+  then (
+    let text = Yojson.Safe.to_string json in
+    List.iter subscribers ~f:(fun c -> send_text c text))
+;;
+
 let send_ctx t conn coin =
   Option.iter (Active_asset_ctx.of_exchange t.exchange t.day_stats coin) ~f:(fun ctx ->
     send_json conn (Active_asset_ctx.to_ws_message ctx))
@@ -246,15 +264,101 @@ let broadcast_ctx t =
         if Set.mem c.ctx_coins coin then send_text c text)))
 ;;
 
-let broadcast_user_event t user fills =
+(* Adds [liquidation] to the fills (JSON objects with a [tid]) of liquidation trades, as
+   Hyperliquid's fills carry it. *)
+let annotate_fill t (json : Yojson.Safe.t) =
+  match json with
+  | `Assoc fields ->
+    (match List.Assoc.find fields "tid" ~equal:String.equal with
+     | Some (`Int tid) ->
+       (match Hashtbl.find t.liquidation_trades tid with
+        | Some l ->
+          `Assoc (fields @ [ "liquidation", User_fill.Liquidation.yojson_of_t l ])
+        | None -> json)
+     | _ -> json)
+  | json -> json
+;;
+
+(* [annotate_fill] on every element of a ["fills"] list, at any depth of a message. *)
+let rec annotate_fills t (json : Yojson.Safe.t) =
+  if Hashtbl.is_empty t.liquidation_trades
+  then json
+  else (
+    match json with
+    | `Assoc fields ->
+      `Assoc
+        (List.map fields ~f:(fun (key, value) ->
+           match key, value with
+           | "fills", `List fills -> key, `List (List.map fills ~f:(annotate_fill t))
+           | _, (`Assoc _ as value) -> key, annotate_fills t value
+           | _ -> key, value))
+    | json -> json)
+;;
+
+let fills_json t fills =
+  `List (List.map fills ~f:(fun f -> annotate_fill t (User_fill.yojson_of_t f)))
+;;
+
+let send_to_event_users t user json =
   let subscribers =
     Hashtbl.data t.conns
     |> List.filter ~f:(fun (c : Conn.t) -> Set.mem c.event_users user)
   in
   if not (List.is_empty subscribers)
   then (
-    let text = Yojson.Safe.to_string (User_channels.user_fills_event fills) in
+    let text = Yojson.Safe.to_string json in
     List.iter subscribers ~f:(fun c -> send_text c text))
+;;
+
+let broadcast_user_event t user fills =
+  send_to_event_users t user (annotate_fills t (User_channels.user_fills_event fills))
+;;
+
+(* Records the liquidation orders the engine sent, and sends one [liquidation] user event
+   per liquidated account. *)
+let publish_liquidations t =
+  let liquidations = Exchange.drain_liquidation_events t.exchange in
+  List.iter liquidations ~f:(fun (l : Exchange_core_engine.Book_liquidation.Event.t) ->
+    Log.Global.info
+      !"liquidation %s %s %s %s mark=%s"
+      (match l.method_ with
+       | Market -> "market"
+       | Backstop -> "backstop")
+      (Address.to_string l.account)
+      (Coin.to_string l.symbol)
+      (Size.to_string l.order_size)
+      (Price.to_string l.mark);
+    Option.iter l.order_id ~f:(fun oid ->
+      Hashtbl.set
+        t.liquidation_orders
+        ~key:(l.account, oid)
+        ~data:
+          { User_fill.Liquidation.liquidated_user = Some l.account
+          ; mark_px = l.mark
+          ; method_ = "market"
+          }));
+  List.dedup_and_sort
+    liquidations
+    ~compare:(fun (a : Exchange_core_engine.Book_liquidation.Event.t) b ->
+      Address.compare a.account b.account)
+  |> List.iter ~f:(fun (l : Exchange_core_engine.Book_liquidation.Event.t) ->
+    let lid = t.next_lid in
+    t.next_lid <- lid + 1;
+    send_to_event_users
+      t
+      l.account
+      (`Assoc
+        [ "channel", `String User_event.channel
+        ; ( "data"
+          , User_event.yojson_of_t
+              (Liquidation
+                 { lid
+                 ; liquidator = Adapt.liquidator
+                 ; liquidated_user = l.account
+                 ; liquidated_ntl_pos = Usd.to_string l.notional
+                 ; liquidated_account_value = Usd.to_string l.equity
+                 }) )
+        ]))
 ;;
 
 (* One [webData2] message per followed user, encoded once. *)
@@ -359,6 +463,7 @@ let remember_order t user (update : Order_update.t) =
 ;;
 
 let publish t =
+  publish_liquidations t;
   let numbered = Exchange.drain_numbered_events t.exchange in
   let events = List.map numbered ~f:(fun (e : Event.Numbered.t) -> e.event) in
   if not (Hashtbl.is_empty t.builder_orders) then charge_builder_fees t events;
@@ -406,6 +511,13 @@ let publish t =
         in
         match event with
         | Fill { fill; taker; maker } ->
+          Option.iter
+            (Hashtbl.find t.liquidation_orders (fill.taker, fill.taker_oid))
+            ~f:(fun l ->
+              Hashtbl.set
+                t.liquidation_trades
+                ~key:(Exchange_core.Trade_id.to_int fill.tid)
+                ~data:l);
           let notional = Notional.mul fill.px fill.sz in
           Rankings.record_volume t.rankings fill.taker notional;
           Rankings.record_volume t.rankings fill.maker notional;
@@ -428,10 +540,13 @@ let publish t =
   Map.iteri trades ~f:(fun ~key:coin ~data ->
     broadcast t (Trades { coin }) (Trades (List.rev data)));
   Map.iteri fills ~f:(fun ~key:user ~data ->
-    broadcast
+    broadcast_json
       t
       (User_fills { user })
-      (User_fills { is_snapshot = false; user; fills = List.rev data });
+      (annotate_fills
+         t
+         (Ws_message.yojson_of_t
+            (User_fills { is_snapshot = false; user; fills = List.rev data })));
     broadcast_user_event t user (List.rev data));
   let updates =
     List.fold_right t.rejection_updates ~init:updates ~f:(fun (address, update) acc ->
@@ -470,11 +585,13 @@ let handle_info t (req : Info_request.t) =
       | All_mids -> Some (All_mids (Adapt.all_mids ex))
       | Open_orders { user } -> Some (Open_orders (Adapt.open_orders ex user))
       | User_fills { user } -> Some (User_fills (Adapt.user_fills ex user))
+      (* annotated below *)
       | Clearinghouse_state { user } ->
         Some (Clearinghouse_state (Adapt.clearinghouse_state ex user))
       | Meta -> Some (Meta (Adapt.meta ex))
     in
     match response with
+    | Some (User_fills fills) -> fills_json t fills
     | Some r -> Info_response.yojson_of_t r
     | None -> `Null)
 ;;
@@ -606,7 +723,7 @@ let handle_extra_info t json =
         f.time >= req.start_time && f.time <= end_time)
       |> Fn.flip List.take User_fills_by_time.max_fills_per_response
     in
-    Some (User_fills_by_time.yojson_of_response fills)
+    Some (fills_json t fills)
   | _ -> None
 ;;
 
@@ -783,9 +900,13 @@ let ws_snapshot t conn (sub : Subscription.t) =
   | All_mids -> send conn (All_mids (Adapt.all_mids t.exchange))
   | User_fills { user } ->
     ensure_account t user;
-    send
+    send_json
       conn
-      (User_fills { is_snapshot = true; user; fills = Adapt.user_fills t.exchange user })
+      (annotate_fills
+         t
+         (Ws_message.yojson_of_t
+            (User_fills
+               { is_snapshot = true; user; fills = Adapt.user_fills t.exchange user })))
   | Order_updates { user } -> ensure_account t user
   | Trades _ -> ()
 ;;
