@@ -72,6 +72,7 @@ let%expect_test "an entry is one line of JSON" =
     { time = start
     ; address = Helpers.addr 0xa0
     ; request = order ~asset:0 ~is_buy:true ~px:"100000" ~sz:"0.01" ~tif:"Gtc"
+    ; builder = None
     }
   in
   let line = Journal.Entry.to_line entry in
