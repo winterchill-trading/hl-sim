@@ -98,3 +98,38 @@ let%expect_test "liquidation cancels are liquidatedCanceled" =
     |}];
   return ()
 ;;
+
+let%expect_test "a bid through the user's own ask expires the ask" =
+  Log.Global.set_output [];
+  let server = Server.create ~now (Adapt.create_exchange ()) in
+  let%bind http = Server.listen server ~port:0 in
+  let%bind incoming, outgoing = Ws_helpers.connect (Server.port http) in
+  Pipe.write_without_pushback
+    outgoing
+    (sprintf
+       {|{"method":"subscribe","subscription":{"type":"orderUpdates","user":"%s"}}|}
+       (Address.to_string mm));
+  let%bind () = Ws_helpers.receive incoming in
+  let place ~is_buy ~px ~tif =
+    print_endline
+      (Yojson.Safe.to_string
+         (Exchange_response.yojson_of_t
+            (Server.handle_exchange server mm (order ~is_buy ~px ~tif))))
+  in
+  place ~is_buy:false ~px:"100000" ~tif:Gtc;
+  let%bind () = Ws_helpers.receive incoming in
+  [%expect {|
+    {"channel":"subscriptionResponse","data":{"method":"subscribe","subscription":{"type":"orderUpdates","user":"0x00000000000000000000000000000000000000aa"}}}
+    {"status":"ok","response":{"type":"order","data":{"statuses":[{"resting":{"oid":1}}]}}}
+    {"channel":"orderUpdates","data":[{"order":{"coin":"BTC","side":"A","limitPx":"100000","sz":"0.01","oid":1,"timestamp":1700000000000,"origSz":"0.01"},"status":"open","statusTimestamp":1700000000000}]}
+    |}];
+  (* Hyperliquid cancels the resting order and lets the new one rest; no error. *)
+  place ~is_buy:true ~px:"100000" ~tif:Gtc;
+  let%bind () = Ws_helpers.receive incoming in
+  [%expect {|
+    {"status":"ok","response":{"type":"order","data":{"statuses":[{"resting":{"oid":2}}]}}}
+    {"channel":"orderUpdates","data":[{"order":{"coin":"BTC","side":"A","limitPx":"100000","sz":"0.01","oid":1,"timestamp":1700000000000,"origSz":"0.01"},"status":"selfTradeCanceled","statusTimestamp":1700000000000},{"order":{"coin":"BTC","side":"B","limitPx":"100000","sz":"0.01","oid":2,"timestamp":1700000000000,"origSz":"0.01"},"status":"open","statusTimestamp":1700000000000}]}
+    |}];
+  Pipe.close outgoing;
+  Cohttp_async.Server.close http
+;;
