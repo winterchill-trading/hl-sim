@@ -195,8 +195,9 @@ let%expect_test "rejections" =
     (Error
      "Order could not immediately match against any resting orders. asset=0")
     (Error "Reduce only order would increase position. asset=0")
-    (Error "Order would have matched against own resting order. asset=0")
-    (Resting (oid 9) (cloid ()))
+    (Resting (oid 8) (cloid ()))
+    (Error
+     "Post only order would have immediately matched, bbo was none@100000. asset=0")
     (Resting (oid 10) (cloid (0x00000000000000000000000000000007)))
     (Error "Duplicate cloid. asset=0")
     (Error "Asset 9 does not exist.")
@@ -204,7 +205,7 @@ let%expect_test "rejections" =
     |}]
 ;;
 
-let%expect_test "self-trade, IOC partial fill and market orders" =
+let%expect_test "self-trade expires the resting order, IOC and market orders" =
   let ex = fresh () in
   place ex 1 Sell "100000" "0.01";
   place ex 2 Sell "100100" "0.01";
@@ -213,10 +214,13 @@ let%expect_test "self-trade, IOC partial fill and market orders" =
     {|
     (Resting (oid 1) (cloid ()))
     (Resting (oid 2) (cloid ()))
-    (Error "Order would have matched against own resting order. asset=0")
+    (Resting (oid 3) (cloid ()))
     |}];
   place ex 3 ~tif:Ioc Buy "100100" "0.05";
-  [%expect {| (Filled (oid 4) (total_sz 0.02) (avg_px 100050) (cloid ())) |}];
+  [%expect {|
+    (Error
+     "Order could not immediately match against any resting orders. asset=0")
+    |}];
   place ex 1 Buy "99000" "0.01";
   place ex 1 Buy "98000" "0.01";
   print_s
@@ -227,26 +231,27 @@ let%expect_test "self-trade, IOC partial fill and market orders" =
     {|
     (Resting (oid 5) (cloid ()))
     (Resting (oid 6) (cloid ()))
-    (Filled (oid 7) (total_sz 0.02) (avg_px 98500) (cloid ()))
+    (Filled (oid 7) (total_sz 0.03) (avg_px 99066.66666666) (cloid ()))
     |}];
   print_events ex;
   [%expect
     {|
     accepted 0001 oid=1 A 0.01@100000
     accepted 0002 oid=2 A 0.01@100100
-    rejected 0001 Order would have matched against own resting order. asset=0
-    fill tid=1 0.01@100000 taker=0003(Open Long fee 0.45) maker=0001(Open Short fee 0.15)
-    filled 0001 oid=1 A 0@100000
-    fill tid=2 0.01@100100 taker=0003(Open Long fee 0.45045) maker=0002(Open Short fee 0.15015)
+    fill tid=1 0.01@100100 taker=0001(Open Long fee 0.45045) maker=0002(Open Short fee 0.15015)
     filled 0002 oid=2 A 0@100100
-    cancelled 0003 oid=4 B 0.03@100100 Ioc_unfilled
+    cancelled 0001 oid=1 A 0.01@100000 Self_trade
+    accepted 0001 oid=3 B 0.01@100200
+    rejected 0003 Order could not immediately match against any resting orders. asset=0
     accepted 0001 oid=5 B 0.01@99000
     accepted 0001 oid=6 B 0.01@98000
-    fill tid=3 0.01@99000 taker=0003(Close Long fee 0.4455) maker=0001(Close Short fee 0.1485)
+    fill tid=2 0.01@100200 taker=0003(Open Short fee 0.4509) maker=0001(Open Long fee 0.1503)
+    filled 0001 oid=3 B 0@100200
+    fill tid=3 0.01@99000 taker=0003(Open Short fee 0.4455) maker=0001(Open Long fee 0.1485)
     filled 0001 oid=5 B 0@99000
-    fill tid=4 0.01@98000 taker=0003(Close Long fee 0.441) maker=0001(Open Long fee 0.147)
+    fill tid=4 0.01@98000 taker=0003(Open Short fee 0.441) maker=0001(Open Long fee 0.147)
     filled 0001 oid=6 B 0@98000
-    cancelled 0003 oid=7 A 0.01@94050 Ioc_unfilled
+    filled 0003 oid=7 A 0@95190
     |}]
 ;;
 
