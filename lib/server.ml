@@ -78,6 +78,13 @@ type t =
   ; rankings : Rankings.t
   ; mutable rejection_updates : (Address.t * Order_update.t) list
   (** newest first; published with the request's events *)
+  ; scheduled_cancels : int Address.Table.t (** [scheduleCancel] time, ms *)
+  ; scheduled_cancel_fires : (int * int) Address.Table.t
+  (** UTC day and number of scheduled cancels fired that day *)
+  ; scheduled_cancelled : Order_key.Hash_set.t
+  (** orders cancelled by a scheduled cancel, until their update is published *)
+  ; order_history : Order_update.t Order_key.Table.t (** latest update per order *)
+  ; cloid_history : Order_id.t Cloid.Table.t Address.Table.t
   ; mutable charging_builder_fees : bool
   (** builder fees move money through deposits, which are not deposits to the leaderboard *)
   }
@@ -87,10 +94,34 @@ let config t = t.config
 let agents t = t.agents
 let num_ws_connections t = Hashtbl.length t.conns
 let num_ws_dropped t = t.num_ws_dropped
+let ms_per_day = 86_400_000
+
+(* Fires every [scheduleCancel] that is due: cancels all the account's resting orders,
+   whose updates then carry the status "scheduledCancel". *)
+let fire_scheduled_cancels t =
+  if not (Hashtbl.is_empty t.scheduled_cancels)
+  then (
+    let now_ms = Exchange.now t.exchange / 1_000_000 in
+    Hashtbl.to_alist t.scheduled_cancels
+    |> List.filter ~f:(fun (_, time) -> time <= now_ms)
+    |> List.sort ~compare:[%compare: Address.t * int]
+    |> List.iter ~f:(fun (account, _) ->
+      Hashtbl.remove t.scheduled_cancels account;
+      let day = now_ms / ms_per_day in
+      Hashtbl.update t.scheduled_cancel_fires account ~f:(function
+        | Some (d, n) when d = day -> d, n + 1
+        | _ -> day, 1);
+      List.iter (Exchange.open_orders t.exchange account) ~f:(fun o ->
+        Hash_set.add t.scheduled_cancelled (account, o.order_id);
+        ignore
+          (Exchange.cancel t.exchange account ~symbol:o.symbol o.order_id
+           : Exchange_core.Cancel_status.t))))
+;;
 
 let step_clock t =
   let now = t.now () in
   if now > Exchange.now t.exchange then Exchange.step t.exchange ~now;
+  fire_scheduled_cancels t;
   let now = Exchange.now t.exchange in
   Rankings.sample t.rankings t.exchange;
   List.iter t.on_clock_step ~f:(fun f -> f ~now)
@@ -126,6 +157,11 @@ let create ?(config = Config.default) ?(now = wall_clock) ?journal exchange =
     ; builder_orders = Order_key.Table.create ()
     ; rankings = Rankings.create ()
     ; rejection_updates = []
+    ; scheduled_cancels = Address.Table.create ()
+    ; scheduled_cancel_fires = Address.Table.create ()
+    ; scheduled_cancelled = Order_key.Hash_set.create ()
+    ; order_history = Order_key.Table.create ()
+    ; cloid_history = Address.Table.create ()
     ; charging_builder_fees = false
     }
   in
@@ -291,6 +327,15 @@ let charge_builder_fees t events =
         | _ -> ()))
 ;;
 
+let remember_order t user (update : Order_update.t) =
+  Hashtbl.set t.order_history ~key:(user, update.order.oid) ~data:update;
+  Option.iter update.order.cloid ~f:(fun cloid ->
+    Hashtbl.set
+      (Hashtbl.find_or_add t.cloid_history user ~default:Cloid.Table.create)
+      ~key:cloid
+      ~data:update.order.oid)
+;;
+
 let publish t =
   let events = Exchange.drain_events t.exchange in
   if not (Hashtbl.is_empty t.builder_orders) then charge_builder_fees t events;
@@ -303,7 +348,16 @@ let publish t =
         Option.iter (Event.book_symbol event) ~f:(Hash_set.add t.dirty_books);
         let updates =
           match Adapt.order_update event with
-          | Some (address, update) -> Map.add_multi updates ~key:address ~data:update
+          | Some (address, update) ->
+            let key = address, update.order.oid in
+            let update =
+              if Hash_set.mem t.scheduled_cancelled key
+              then (
+                Hash_set.remove t.scheduled_cancelled key;
+                { update with status = Other "scheduledCancel" })
+              else update
+            in
+            Map.add_multi updates ~key:address ~data:update
           | None -> updates
         in
         match event with
@@ -339,6 +393,7 @@ let publish t =
       Map.add_multi acc ~key:address ~data:update)
   in
   t.rejection_updates <- [];
+  Map.iteri updates ~f:(fun ~key:user ~data -> List.iter data ~f:(remember_order t user));
   Map.iteri updates ~f:(fun ~key:user ~data ->
     broadcast t (Order_updates { user }) (Order_updates (List.rev data)));
   schedule_l2_flush t
@@ -377,6 +432,48 @@ let handle_info t (req : Info_request.t) =
     | None -> `Null)
 ;;
 
+(* [{"status": "order", "order": {"order": {...}, "status": "open", "statusTimestamp": ms}}]
+   or [{"status": "unknownOid"}]; the order is the frontend view, with a limit order's
+   fixed trigger fields. *)
+let order_status t json =
+  let user = Address.t_of_yojson (Json.member_exn json ~key:"user") in
+  let oid =
+    match Json.member_exn json ~key:"oid" with
+    | `String cloid ->
+      Hashtbl.find t.cloid_history user
+      |> Option.bind ~f:(fun table -> Hashtbl.find table (Cloid.of_string cloid))
+    | oid -> Some (Order_id.t_of_yojson oid)
+  in
+  match Option.bind oid ~f:(fun oid -> Hashtbl.find t.order_history (user, oid)) with
+  | None -> `Assoc [ "status", `String "unknownOid" ]
+  | Some update ->
+    let order =
+      match Open_order.yojson_of_t update.order with
+      | `Assoc fields ->
+        `Assoc
+          (fields
+           @ [ "orderType", `String "Limit"
+             ; "isTrigger", `Bool false
+             ; "triggerPx", `String "0.0"
+             ; "triggerCondition", `String "N/A"
+             ; "children", `List []
+             ; "isPositionTpsl", `Bool false
+             ; "reduceOnly", `Bool false
+             ; "tif", `Null
+             ])
+      | json -> json
+    in
+    `Assoc
+      [ "status", `String "order"
+      ; ( "order"
+        , `Assoc
+            [ "order", order
+            ; "status", `String (Order_update.Status.to_wire update.status)
+            ; "statusTimestamp", `Int update.status_timestamp
+            ] )
+      ]
+;;
+
 let leaderboard t = Rankings.to_json (Rankings.rows t.rankings t.exchange)
 
 (* Info requests hl-protocol's [Info_request] does not model; [None] for the others. *)
@@ -389,6 +486,7 @@ let handle_extra_info t json =
   | Some (`String "extraAgents") ->
     Some (`List (List.map (Agents.agents t.agents (user ())) ~f:Agents.Agent.to_json))
   | Some (`String "leaderboard") -> Some (leaderboard t)
+  | Some (`String "orderStatus") -> Some (order_status t json)
   | Some (`String "userFillsByTime") ->
     let req = User_fills_by_time.t_of_yojson json in
     ensure_account t req.user;
@@ -496,10 +594,57 @@ let handle_user_action ?signature t address (action : User_action.t) : Exchange_
     | Error msg -> Exchange_response.Err msg)
 ;;
 
+let schedule_cancel t address time =
+  let now_ms = Exchange.now t.exchange / 1_000_000 in
+  let fired_today =
+    match Hashtbl.find t.scheduled_cancel_fires address with
+    | Some (day, n) when day = now_ms / ms_per_day -> n
+    | _ -> 0
+  in
+  match time with
+  | None ->
+    Hashtbl.remove t.scheduled_cancels address;
+    (Ok Default : Exchange_response.t)
+  | Some time when time < now_ms + 5_000 ->
+    (* sim wording *)
+    Err "Scheduled cancel time too early, must be at least 5 seconds from now."
+  | Some _ when fired_today >= 10 ->
+    (* sim wording; the limit of 10 triggers per UTC day is documented *)
+    Err "Too many scheduled cancels triggered today."
+  | Some time ->
+    Hashtbl.set t.scheduled_cancels ~key:address ~data:time;
+    Ok Default
+;;
+
+let handle_extra_action t address (action : Extra_action.t) : Exchange_response.t =
+  ensure_account t address;
+  mutate t ~f:(fun ex ->
+    Option.iter t.journal ~f:(fun journal ->
+      Journal.write_record
+        journal
+        (Extra { time = Exchange.now ex; address; extra_action = action }));
+    match (action : Extra_action.t) with
+    | Update_leverage { asset; is_cross; leverage } ->
+      (match Meta.coin_of_asset (Adapt.meta ex) asset with
+       | None ->
+         Exchange_response.Err (sprintf "Asset %d does not exist." (Asset.to_int asset))
+       | Some _ when not is_cross ->
+         (* sim wording: the engine is cross margin only *)
+         Err "Isolated margin is not supported."
+       | Some coin ->
+         (match Exchange.set_leverage ex address coin leverage with
+          | Ok () -> Ok Default
+          | Error _ -> (* sim wording *) Err "Invalid leverage value."))
+    | Schedule_cancel { time } -> schedule_cancel t address time
+    | Batch_modify { modifies } ->
+      Ok (Order (List.map modifies ~f:(Adapt.modify ex address))))
+;;
+
 let replay ?config exchange records =
   let time_of : Journal.Record.t -> int = function
     | Request e -> e.time
     | User_action e -> e.time
+    | Extra e -> e.time
   in
   let clock =
     ref
@@ -515,7 +660,9 @@ let replay ?config exchange records =
       | Request { address; request; builder; time = _ } ->
         handle_exchange ?builder t address request
       | User_action { address; user_action; signature; time = _ } ->
-        handle_user_action ?signature t address user_action)
+        handle_user_action ?signature t address user_action
+      | Extra { address; extra_action; time = _ } ->
+        handle_extra_action t address extra_action)
   in
   t, responses
 ;;
@@ -719,21 +866,16 @@ let use_nonce t ~signer ~nonce =
 
 (* The addresses that may have signed an L1 action: one per signing domain (testnet "b"
    and mainnet "a"), or only the configured one in strict mode. *)
-let l1_signers t json (req : Exchange_request.t) signature =
+let l1_signers t (env : Exchange_envelope.t) signature =
   match Hl_client.Signing.Signature.t_of_yojson signature with
   | exception _ -> []
   | signature ->
-    let expires_after =
-      match Json.member json ~key:"expiresAfter" with
-      | Some (`Int n) -> Some n
-      | _ -> None
-    in
     let connection_id =
       Hl_client.Signing.action_hash
-        ?expires_after
-        ~vault_address:req.vault_address
-        ~nonce:req.nonce
-        (Json.member_exn json ~key:"action")
+        ?expires_after:env.expires_after
+        ~vault_address:env.vault_address
+        ~nonce:env.nonce
+        env.action
     in
     let networks =
       if t.config.strict_signatures then [ t.config.is_mainnet ] else [ false; true ]
@@ -745,27 +887,27 @@ let l1_signers t json (req : Exchange_request.t) signature =
       |> Result.ok)
 ;;
 
-let resolve_l1 t ~x_address json (req : Exchange_request.t) =
+let resolve_l1 t ~x_address (env : Exchange_envelope.t) =
   let open Result.Let_syntax in
-  let fallback () = Ok (unsigned_address t ~x_address ~vault_address:req.vault_address) in
-  match req.signature with
+  let fallback () = Ok (unsigned_address t ~x_address ~vault_address:env.vault_address) in
+  match env.signature with
   | None | Some `Null ->
     if t.config.strict_signatures then Error "Missing signature." else fallback ()
   | Some signature ->
-    let signers = l1_signers t json req signature in
+    let signers = l1_signers t env signature in
     (match
        List.find_map signers ~f:(fun signer ->
          Option.map (Agents.owner t.agents signer) ~f:(fun owner -> signer, owner))
      with
      | Some (agent, owner) ->
-       let%map () = use_nonce t ~signer:agent ~nonce:req.nonce in
+       let%map () = use_nonce t ~signer:agent ~nonce:env.nonce in
        owner
      | None when not t.config.strict_signatures -> fallback ()
      | None ->
        (match signers with
         | [] -> Error "Invalid signature."
         | signer :: _ ->
-          let%map () = use_nonce t ~signer ~nonce:req.nonce in
+          let%map () = use_nonce t ~signer ~nonce:env.nonce in
           signer))
 ;;
 
@@ -803,15 +945,22 @@ let handle_exchange_json t ~x_address json : Exchange_response.t =
      | Error msg -> Err msg
      | Ok address -> handle_user_action ?signature t address user_action)
   | None ->
-    let req = Exchange_request.t_of_yojson json in
-    let builder =
-      match req.action with
-      | Order _ -> Builder.of_action_json action
-      | Cancel _ | Cancel_by_cloid _ | Modify _ -> None
-    in
-    (match resolve_l1 t ~x_address json req with
-     | Error msg -> Err msg
-     | Ok address -> handle_exchange ?builder t address req)
+    let env = Exchange_envelope.t_of_yojson json in
+    (match Extra_action.of_action_json action with
+     | Some extra ->
+       (match resolve_l1 t ~x_address env with
+        | Error msg -> Err msg
+        | Ok address -> handle_extra_action t address extra)
+     | None ->
+       let req = Exchange_request.t_of_yojson json in
+       let builder =
+         match req.action with
+         | Order _ -> Builder.of_action_json action
+         | Cancel _ | Cancel_by_cloid _ | Modify _ -> None
+       in
+       (match resolve_l1 t ~x_address env with
+        | Error msg -> Err msg
+        | Ok address -> handle_exchange ?builder t address req))
 ;;
 
 let header_is req name value =

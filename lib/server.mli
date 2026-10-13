@@ -9,8 +9,9 @@
       and [leaderboard] ({!Rankings}).
     - [GET /leaderboard] (also [/Mainnet/leaderboard] and [/Testnet/leaderboard], the
       stats host's paths): the same leaderboard.
-    - [POST /exchange]: an {!Hl_protocol.Exchange_request.t} or a {!User_action.t},
-      answered with an {!Hl_protocol.Exchange_response.t}; see "Who acts" below.
+    - [POST /exchange]: an {!Hl_protocol.Exchange_request.t}, an {!Extra_action.t}
+      ([updateLeverage], [scheduleCancel], [batchModify]) or a {!User_action.t}, answered
+      with an {!Hl_protocol.Exchange_response.t}; see "Who acts" below.
     - [GET /ws] with [Upgrade: websocket]: Hyperliquid's websocket protocol
       ({!Hl_protocol.Ws_request.t} in, {!Hl_protocol.Ws_message.t} out), plus the
       [activeAssetCtx] channel ({!Active_asset_ctx}), sent on subscribe and with every
@@ -165,6 +166,10 @@ val handle_exchange_json
   -> x_address:Address.t option
   -> Yojson.Safe.t
   -> Exchange_response.t
+
+(** Applies an [updateLeverage], [scheduleCancel] or [batchModify] for [address], already
+    authenticated. *)
+val handle_extra_action : t -> Address.t -> Extra_action.t -> Exchange_response.t
 
 (** Applies journaled records, in order, to a server over [exchange] (normally fresh from
     {!Adapt.create_exchange}), stepping the clock to each record's [time] first. Returns
