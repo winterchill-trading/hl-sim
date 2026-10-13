@@ -76,6 +76,8 @@ type t =
   ; builder_orders : Builder.t Order_key.Table.t
   (** resting or just-filled orders placed with a builder code *)
   ; rankings : Rankings.t
+  ; mutable rejection_updates : (Address.t * Order_update.t) list
+  (** newest first; published with the request's events *)
   ; mutable charging_builder_fees : bool
   (** builder fees move money through deposits, which are not deposits to the leaderboard *)
   }
@@ -123,6 +125,7 @@ let create ?(config = Config.default) ?(now = wall_clock) ?journal exchange =
     ; agents = Agents.create ()
     ; builder_orders = Order_key.Table.create ()
     ; rankings = Rankings.create ()
+    ; rejection_updates = []
     ; charging_builder_fees = false
     }
   in
@@ -331,6 +334,11 @@ let publish t =
       (User_fills { user })
       (User_fills { is_snapshot = false; user; fills = List.rev data });
     broadcast_user_event t user (List.rev data));
+  let updates =
+    List.fold_right t.rejection_updates ~init:updates ~f:(fun (address, update) acc ->
+      Map.add_multi acc ~key:address ~data:update)
+  in
+  t.rejection_updates <- [];
   Map.iteri updates ~f:(fun ~key:user ~data ->
     broadcast t (Order_updates { user }) (Order_updates (List.rev data)));
   schedule_l2_flush t
@@ -417,6 +425,13 @@ let check_builder t ex address (builder : Builder.t) =
   else Ok ()
 ;;
 
+let place t ex address order =
+  let status, update = Adapt.place_order_with_update ex address order in
+  Option.iter update ~f:(fun u ->
+    t.rejection_updates <- (address, u) :: t.rejection_updates);
+  status
+;;
+
 let place_with_builder t ex address builder orders =
   match check_builder t ex address builder with
   | Error msg -> Exchange_response.Err msg
@@ -424,7 +439,7 @@ let place_with_builder t ex address builder orders =
     Exchange_response.Ok
       (Order
          (List.map orders ~f:(fun order ->
-            let status = Adapt.place_order ex address order in
+            let status = place t ex address order in
             (match status with
              | Resting { oid; _ } | Filled { oid; _ } ->
                Hashtbl.set t.builder_orders ~key:(address, oid) ~data:builder
@@ -443,8 +458,7 @@ let handle_exchange ?builder t address (req : Exchange_request.t) : Exchange_res
        | Some builder ->
          ensure_account t builder.builder;
          place_with_builder t ex address builder orders
-       | None ->
-         Exchange_response.Ok (Order (List.map orders ~f:(Adapt.place_order ex address))))
+       | None -> Exchange_response.Ok (Order (List.map orders ~f:(place t ex address))))
     | Cancel { cancels } ->
       Exchange_response.Ok (Cancel (List.map cancels ~f:(Adapt.cancel ex address)))
     | Cancel_by_cloid { cancels } ->

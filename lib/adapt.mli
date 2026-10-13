@@ -49,6 +49,20 @@ val meta : Exchange.t -> Meta.t
     engine. *)
 val place_order : Exchange.t -> Address.t -> Order_request.t -> Order_status.t
 
+(** [place_order], with the [orderUpdates] message Hyperliquid sends for an order the
+    matching engine rejects: status ["badAloPxRejected"], ["iocCancelRejected"],
+    ["minTradeNtlRejected"], ["perpMarginRejected"], ["reduceOnlyRejected"],
+    ["tickRejected"], ... ({!reject_status}). Front-end rejections (unknown asset, trigger
+    orders) have no order id and get none. *)
+val place_order_with_update
+  :  Exchange.t
+  -> Address.t
+  -> Order_request.t
+  -> Order_status.t * Order_update.t option
+
+(** The [orderUpdates] status of an order rejected for [reason]. *)
+val reject_status : Exchange_core.Reject_reason.t -> Order_update.Status.t
+
 (** An IOC order priced [slippage_bps] (default from config) through the best opposite
     price, as Hyperliquid's SDKs submit market orders. *)
 val market_order
@@ -109,5 +123,8 @@ val trade : Order_book.Fill.t -> Trade.t
 val l2 : Exchange_core.L2.t -> L2_book.t
 val clearinghouse_state_of_view : Exchange_core.Account_view.t -> Clearinghouse_state.t
 
-(** The [orderUpdates] message for the order's owner, if the event is an order update. *)
+(** The [orderUpdates] message for the order's owner, if the event is an order update.
+    Liquidation cancels are ["liquidatedCanceled"], self-trade cancels
+    ["selfTradeCanceled"]. Rejections are not events with an order; see
+    {!place_order_with_update}. *)
 val order_update : Exchange_core_engine.Event.t -> (Address.t * Order_update.t) option

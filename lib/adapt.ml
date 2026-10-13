@@ -206,7 +206,7 @@ let order_update (event : Event.t) =
       match reason with
       | User | Modified | Ioc_unfilled -> Canceled
       | Self_trade -> Other "selfTradeCanceled"
-      | Liquidated -> Margin_canceled
+      | Liquidated -> Other "liquidatedCanceled"
     in
     update account order status time
   | Order_rejected _ | Fill _ | Liquidation _ | Funding _ -> None
@@ -254,13 +254,50 @@ let reject_request ex address (req : Order_request.t) (coin, reason, msg) : Orde
   Error msg
 ;;
 
-let place_order ex address (req : Order_request.t) =
-  match neutral_request ex req with
-  | Error rejection -> reject_request ex address req rejection
-  | Ok neutral ->
-    Exchange.place ex address neutral
-    |> order_status (meta ex) ~coin:(Some neutral.symbol)
+let reject_status : Neutral.Reject_reason.t -> Order_update.Status.t = function
+  | Invalid_price -> Other "tickRejected"
+  | Below_min_value _ -> Other "minTradeNtlRejected"
+  | Insufficient_margin -> Other "perpMarginRejected"
+  | Reduce_only_would_increase -> Other "reduceOnlyRejected"
+  | Post_only_would_cross _ -> Other "badAloPxRejected"
+  | No_liquidity -> Other "iocCancelRejected"
+  | Self_trade -> Other "selfTradeCanceled"
+  | Unknown_symbol
+  | Unsupported _
+  | Invalid_size
+  | Duplicate_client_order_id
+  | Order_not_found -> Rejected
 ;;
+
+let place_order_with_update ex address (req : Order_request.t) =
+  match neutral_request ex req with
+  | Error rejection -> reject_request ex address req rejection, None
+  | Ok neutral ->
+    let oid, status = Exchange.place_with_order_id ex address neutral in
+    let update =
+      match status with
+      | Rejected reason ->
+        let time = ms (Exchange.now ex) in
+        Some
+          { Order_update.order =
+              { coin = neutral.symbol
+              ; side = neutral.side
+              ; limit_px = req.limit_px
+              ; sz = req.sz
+              ; oid
+              ; timestamp = time
+              ; orig_sz = Some req.sz
+              ; cloid = req.cloid
+              }
+          ; status = reject_status reason
+          ; status_timestamp = time
+          }
+      | Resting _ | Filled _ -> None
+    in
+    order_status (meta ex) ~coin:(Some neutral.symbol) status, update
+;;
+
+let place_order ex address req = fst (place_order_with_update ex address req)
 
 let market_order ?slippage_bps ?reduce_only ?cloid ex address ~coin ~side ~sz =
   Exchange.place
