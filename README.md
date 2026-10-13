@@ -91,7 +91,7 @@ curl -s localhost:3000/info -d '{"type": "userFills", "user": "0x000000000000000
 Also served: `metaAndAssetCtxs` (each coin's context as on `activeAssetCtx`), `orderStatus`,
 `userRole` (`agent` for an approved agent, `user` for an address the simulator has
 credited, else `missing`), and `maxBuilderFee`, `extraAgents`, `userFillsByTime` and
-`leaderboard` (see [Copy trading](#copy-trading)).
+`leaderboard` and `portfolio` (see [Copy trading](#copy-trading)).
 
 ### Exchange
 
@@ -279,6 +279,13 @@ paging by time.
 and `windowPerformances` (`pnl`, `roi`, `vlm` as strings for `day`, `week`, `month`,
 `allTime`) for every funded account. PnL is the change in account value net of
 deposits; windows roll and are resolved to one-minute samples of the exchange clock.
+
+**Portfolio.** `POST /info {"type": "portfolio", "user": ...}` returns Hyperliquid's list
+of `[window, {accountValueHistory, pnlHistory, vlm}]` for `day`, `week`, `month`,
+`allTime` and their `perp` variants (the same figures: the simulator has no spot). The
+histories are the account's one-minute samples in the window, in milliseconds, then its
+current state; PnL is relative to the window's start. An unknown address gets empty
+histories. This is what `hl-leaderboard` reads for its equity curves.
 
 **Leaders.** `-leaders N` runs N accounts that trade with fixed strategies: leader `i`
 is `0x1eade5` followed by `i` in hex, trades coin `i / 3` and follows trend
