@@ -226,7 +226,11 @@ let command =
            ()
        in
        Option.iter input_journal ~f:(fun path ->
-         let journal = Exchange_core_engine.Journal.create path in
+         let journal =
+           Exchange_core_engine.Journal.create
+             ~header:{ self_trade = Exchange_core_engine.Exchange.self_trade exchange }
+             path
+         in
          Exchange_core_engine.Journal.attach journal exchange;
          Clock_ns.every (Time_ns.Span.of_sec 1.) (fun () ->
            Exchange_core_engine.Journal.flush journal);
