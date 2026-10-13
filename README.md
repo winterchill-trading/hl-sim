@@ -305,15 +305,15 @@ after fees:
 
 | Leader | With the edge | Without |
 | --- | ---: | ---: |
-| mean-reversion-7 | +4955 | -1469 |
-| trend-6 | +4161 | -2475 |
-| trend-0 | +4088 | -2279 |
-| mean-reversion-1 | +3047 | -1245 |
-| trend-3 | +2198 | +210 |
-| mean-reversion-4 | +1830 | -2762 |
-| random-5 | -410 | -1485 |
-| random-8 | -2629 | -1426 |
-| random-2 | -2812 | -1277 |
+| mean-reversion-7 | +4795 | -1792 |
+| trend-0 | +4321 | +1490 |
+| trend-6 | +4057 | -615 |
+| mean-reversion-1 | +3286 | -1055 |
+| trend-3 | +2008 | -87 |
+| mean-reversion-4 | +1721 | -792 |
+| random-5 | -77 | -466 |
+| random-8 | -2775 | -1171 |
+| random-2 | -2937 | -1510 |
 
 The same seed gives the same ranking on every run. Across seeds 1 to 5 at least three of
 the six trend and mean-reversion leaders end positive; a random leader occasionally
@@ -407,7 +407,8 @@ These live in `Adapt`; everything else is the engine's behaviour.
   `10^-szDecimals`, price tick `10^-(6 - szDecimals)`, at most 5 significant figures
   (integers always allowed) and Hyperliquid's base perps fee tier (taker 4.5 bps, maker
   1.5 bps; `-taker-fee-bps` and `-maker-fee-bps` change it, and an input journal then
-  replays with `Adapt.config ~fees ()`).
+  replays with `Adapt.config ~fees ()`). The input journal records the self-trade policy
+  in its header; replay it with `Journal.load_with_header` and `Journal.replay ~header`.
 - **Timestamps** are reported in milliseconds (the engine counts nanoseconds).
 - **Order statuses** follow Hyperliquid: `resting`, `filled` with total size and average
   price, or `error` with Hyperliquid's message and its ` asset=N` suffix where one exists.
@@ -418,6 +419,11 @@ These live in `Adapt`; everything else is the engine's behaviour.
   `Long > Short`, ...), `feeToken` `USDC` and a placeholder hash derived from the trade
   id. A self-trade cancel is reported as `selfTradeCanceled` and a liquidation cancel as
   `marginCanceled` in `orderUpdates`.
+- **Self-trade prevention** is Hyperliquid's: an order that reaches the same account's
+  resting order cancels the resting one (`selfTradeCanceled` in `orderUpdates`, no fill,
+  no fee, nothing in `trades`) and keeps matching behind it, so it may still fill, rest
+  or be IOC-cancelled. It is never rejected for self-trade
+  (`Adapt.self_trade = Expire_maker`).
 - **Market orders** use 5% slippage, as Hyperliquid's SDKs send them.
 
 ### Server
