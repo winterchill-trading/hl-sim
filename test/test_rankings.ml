@@ -145,3 +145,39 @@ let%expect_test "windows over a simulated week" =
   print_s [%sexp (List.length (Leaderboard.t_of_yojson json).leaderboard_rows : int)];
   [%expect {| 2 |}]
 ;;
+
+(* Seen early in runs with noise traders: a $10M account with a short of a few lots has a
+   liquidation price estimate beyond what a price can hold, which made the leaderboard
+   answer 400. *)
+let%expect_test "the leaderboard of a tiny short against a large balance" =
+  let ex = Adapt.create_exchange () in
+  let server = Server.create ~now:(fun () -> start) ex in
+  List.iter [ maker; taker ] ~f:(fun a ->
+    Server.ensure_account server a;
+    Exchange.deposit ex a (Usd.of_int 10_000_000));
+  let tiny ~is_buy ~tif user =
+    ignore
+      (Adapt.place_order
+         ex
+         user
+         { asset = Asset.of_int 0
+         ; is_buy
+         ; limit_px = Helpers.px "100000"
+         ; sz = Helpers.sz "0.0001"
+         ; reduce_only = false
+         ; order_type = Limit { tif }
+         ; cloid = None
+         }
+       : Order_status.t)
+  in
+  Server.mutate server ~f:(fun _ ->
+    tiny maker ~is_buy:true ~tif:Gtc;
+    tiny taker ~is_buy:false ~tif:Ioc);
+  let rows =
+    match Server.handle_info_json server (`Assoc [ "type", `String "leaderboard" ]) with
+    | `Assoc [ ("leaderboardRows", `List rows) ] -> rows
+    | json -> failwith (Yojson.Safe.to_string json)
+  in
+  print_s [%message "" ~rows:(List.length rows : int)];
+  [%expect {| (rows 2) |}]
+;;
