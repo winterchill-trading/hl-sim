@@ -1,0 +1,145 @@
+open! Core
+open! Hl_protocol
+open! Hl_sim
+module Exchange = Exchange_core_engine.Exchange
+
+let start = 1_700_000_000_000_000_000
+let hour = 3_600 * 1_000_000_000
+let day = 24 * hour
+
+module Notional = Fixed_decimal.Product (Price) (Size) (Usd)
+
+let maker = Helpers.addr 0xa0
+let taker = Helpers.addr 0xa1
+
+let order ex user ~is_buy ~px ~tif =
+  ignore
+    (Adapt.place_order
+       ex
+       user
+       { asset = Asset.of_int 0
+       ; is_buy
+       ; limit_px = Helpers.px px
+       ; sz = Helpers.sz "0.1"
+       ; reduce_only = false
+       ; order_type = Limit { tif }
+       ; cloid = None
+       }
+     : Order_status.t)
+;;
+
+let%expect_test "windows over a simulated week" =
+  let ex = Adapt.create_exchange () in
+  Exchange.step ex ~now:start;
+  let r = Rankings.create () in
+  let deposit a usd =
+    Exchange.deposit ex a usd;
+    Rankings.record_deposit r a usd
+  in
+  let trade ~px =
+    order ex maker ~is_buy:false ~px ~tif:Gtc;
+    order ex taker ~is_buy:true ~px ~tif:Ioc;
+    List.iter (Exchange.drain_events ex) ~f:(fun e ->
+      Option.iter
+        (Exchange_core_engine.Event.executions e)
+        ~f:(fun ((t : Exchange_core_engine.Execution.t), m) ->
+          let n = Notional.mul t.fill.px t.fill.sz in
+          Rankings.record_volume r t.settlement.account n;
+          Rankings.record_volume r m.settlement.account n))
+  in
+  deposit maker (Usd.of_int 100_000);
+  deposit taker (Usd.of_int 100_000);
+  Rankings.sample r ex;
+  (* The taker buys at 100000 on day 0 and again on day 6 after a deposit; the mark is
+     100500 on day 3 and 101000 at the end, so the taker is up and the maker (short) down.
+     The day window starts from the day 3 sample, the others from the start. *)
+  trade ~px:"100000";
+  Exchange.step ex ~now:(start + (3 * day));
+  Exchange.set_mark ex (Coin.of_string "BTC") (Helpers.px "100500");
+  Rankings.sample r ex;
+  Exchange.step ex ~now:(start + (6 * day));
+  Rankings.sample r ex;
+  deposit taker (Usd.of_int 50_000);
+  trade ~px:"100000";
+  Exchange.step ex ~now:(start + (6 * day) + (2 * hour));
+  Exchange.set_mark ex (Coin.of_string "BTC") (Helpers.px "101000");
+  Rankings.sample r ex;
+  let rows = Rankings.rows r ex in
+  print_s [%sexp (rows : Rankings.Row.t list)];
+  [%expect
+    {|
+    (((address 0x00000000000000000000000000000000000000a1)
+      (account_value 150174.4525)
+      (windows
+       ((Day ((pnl 136.9525) (roi 0.00091278846954927922) (vlm 10000)))
+        (Week ((pnl 174.4525) (roi 0.0011630166666666665) (vlm 20000)))
+        (Month ((pnl 174.4525) (roi 0.0011630166666666665) (vlm 20000)))
+        (All_time ((pnl 174.4525) (roi 0.0011630166666666665) (vlm 20000))))))
+     ((address 0x00000000000000000000000000000000000000a0)
+      (account_value 99816.5475)
+      (windows
+       ((Day ((pnl -141.4525) (roi -0.0014151193501270533) (vlm 10000)))
+        (Week ((pnl -183.4525) (roi -0.0018345249999999998) (vlm 20000)))
+        (Month ((pnl -183.4525) (roi -0.0018345249999999998) (vlm 20000)))
+        (All_time ((pnl -183.4525) (roi -0.0018345249999999998) (vlm 20000)))))))
+    |}];
+  let json = Rankings.to_json rows in
+  print_endline (Yojson.Safe.pretty_to_string json);
+  [%expect
+    {|
+    {
+      "leaderboardRows": [
+        {
+          "ethAddress": "0x00000000000000000000000000000000000000a1",
+          "accountValue": "150174.4525",
+          "windowPerformances": [
+            [
+              "day", { "pnl": "136.9525", "roi": "0.0009127885", "vlm": "10000" }
+            ],
+            [
+              "week",
+              { "pnl": "174.4525", "roi": "0.0011630167", "vlm": "20000" }
+            ],
+            [
+              "month",
+              { "pnl": "174.4525", "roi": "0.0011630167", "vlm": "20000" }
+            ],
+            [
+              "allTime",
+              { "pnl": "174.4525", "roi": "0.0011630167", "vlm": "20000" }
+            ]
+          ],
+          "prize": 0,
+          "displayName": null
+        },
+        {
+          "ethAddress": "0x00000000000000000000000000000000000000a0",
+          "accountValue": "99816.5475",
+          "windowPerformances": [
+            [
+              "day",
+              { "pnl": "-141.4525", "roi": "-0.0014151194", "vlm": "10000" }
+            ],
+            [
+              "week",
+              { "pnl": "-183.4525", "roi": "-0.001834525", "vlm": "20000" }
+            ],
+            [
+              "month",
+              { "pnl": "-183.4525", "roi": "-0.001834525", "vlm": "20000" }
+            ],
+            [
+              "allTime",
+              { "pnl": "-183.4525", "roi": "-0.001834525", "vlm": "20000" }
+            ]
+          ],
+          "prize": 0,
+          "displayName": null
+        }
+      ]
+    }
+    |}];
+  (* The output decodes with hl-protocol's reader of the real endpoint. *)
+  print_s [%sexp (List.length (Leaderboard.t_of_yojson json).leaderboard_rows : int)];
+  [%expect {| 2 |}]
+;;
