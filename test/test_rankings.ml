@@ -5,6 +5,7 @@ module Exchange = Exchange_core_engine.Exchange
 
 let start = 1_700_000_000_000_000_000
 let hour = 3_600 * 1_000_000_000
+let minute = 60 * 1_000_000_000
 let day = 24 * hour
 
 module Notional = Fixed_decimal.Product (Price) (Size) (Usd)
@@ -180,4 +181,56 @@ let%expect_test "the leaderboard of a tiny short against a large balance" =
   in
   print_s [%message "" ~rows:(List.length rows : int)];
   [%expect {| (rows 2) |}]
+;;
+
+let%expect_test "portfolio history: samples, then the current state" =
+  let ex = Adapt.create_exchange () in
+  Exchange.step ex ~now:start;
+  let r = Rankings.create () in
+  let deposit a usd =
+    Exchange.deposit ex a usd;
+    Rankings.record_deposit r a usd
+  in
+  deposit maker (Usd.of_int 100_000);
+  deposit taker (Usd.of_int 100_000);
+  Rankings.sample r ex;
+  Exchange.step ex ~now:(start + minute);
+  Rankings.sample r ex;
+  order ex maker ~is_buy:false ~px:"100000" ~tif:Gtc;
+  order ex taker ~is_buy:true ~px:"100000" ~tif:Ioc;
+  Rankings.record_volume r taker (Usd.of_int 10_000);
+  Exchange.step ex ~now:(start + (2 * minute));
+  Exchange.set_mark ex (Coin.of_string "BTC") (Helpers.px "100500");
+  Rankings.sample r ex;
+  let json = Rankings.portfolio r ex taker in
+  let windows =
+    match json with
+    | `List windows ->
+      List.map windows ~f:(function
+        | `List [ `String n; _ ] -> n
+        | _ -> "?")
+    | _ -> []
+  in
+  print_s [%sexp (windows : string list)];
+  [%expect {| (day week month allTime perpDay perpWeek perpMonth perpAllTime) |}];
+  let day =
+    match json with
+    | `List windows ->
+      List.find_map windows ~f:(function
+        | `List [ `String "day"; body ] -> Some body
+        | _ -> None)
+      |> Option.value_exn
+    | _ -> assert false
+  in
+  print_endline (Yojson.Safe.to_string day);
+  [%expect
+    {| {"accountValueHistory":[[1700000000000,"100000"],[1700000060000,"100000"],[1700000120000,"100045.5"]],"pnlHistory":[[1700000000000,"0"],[1700000060000,"0"],[1700000120000,"45.5"]],"vlm":"10000"} |}];
+  let unknown = Rankings.portfolio r ex (Helpers.addr 0xff) in
+  print_endline
+    (Yojson.Safe.to_string
+       (List.hd_exn
+          (match unknown with
+           | `List l -> l
+           | _ -> [])));
+  [%expect {| ["day",{"accountValueHistory":[],"pnlHistory":[],"vlm":"0"}] |}]
 ;;
