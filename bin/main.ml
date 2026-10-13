@@ -61,6 +61,14 @@ let command =
          "-noise-traders"
          (optional_with_default Market_sim.Config.default.noise_traders int)
          ~doc:"N number of noise trader accounts (0 disables the market simulation)"
+     and oracle_interval_ms =
+       flag
+         "-oracle-interval-ms"
+         (optional_with_default 3000 int)
+         ~doc:
+           "MS the market simulation publishes its reference price as the oracle every \
+            MS (Hyperliquid: 3000), and the mark follows Hyperliquid's median of oracle \
+            and book; 0 makes the reference the mark itself, as before"
      and initial_balance =
        flag
          "-initial-balance"
@@ -271,6 +279,10 @@ let command =
                ; vol_bps
                ; noise_traders
                ; symbols = Option.value coins ~default:[]
+               ; oracle_interval =
+                   Option.some_if
+                     (oracle_interval_ms > 0)
+                     (Time_ns.Span.of_int_ms oracle_interval_ms)
                }
                exchange
            in
