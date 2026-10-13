@@ -177,6 +177,14 @@ let command =
          "-leader-balance"
          (optional_with_default (Usd.to_string Leaders.Config.default.balance) string)
          ~doc:"USD deposited into each leader (default 100000)"
+     and leader_edge_s =
+       flag
+         "-leader-edge-s"
+         (optional_with_default 60 int)
+         ~doc:
+           "S the trend and mean-reversion leaders see the reference price S seconds \
+            ahead of the market, so they make money on average (default 60, 0 removes \
+            the edge); not on anchored coins"
      and l2_interval_ms =
        flag
          "-l2-interval-ms"
@@ -262,14 +270,36 @@ let command =
                }
                exchange
            in
-           Server.run_market_sim server sim;
            Some sim)
          else None
        in
+       (* The edge takes over the reference walk of every simulated coin no anchor owns. *)
+       let foresight =
+         Option.bind market_sim ~f:(fun sim ->
+           Option.some_if (leaders > 0 && leader_edge_s > 0) sim)
+         |> Option.map ~f:(fun sim ->
+           let anchored =
+             List.map anchors ~f:(fun (spec : Anchoring.Spec.t) -> spec.sim_symbol)
+           in
+           let coins =
+             Option.value_or_thunk coins ~default:(fun () ->
+               List.map
+                 (Exchange_core_engine.Exchange.instruments exchange)
+                 ~f:(fun (i : Exchange_core.Instrument.t) -> i.symbol))
+             |> List.filter ~f:(fun c -> not (List.mem anchored c ~equal:Coin.equal))
+           in
+           Foresight.create
+             ~seed:(Option.value leaders_seed ~default:seed)
+             ~lookahead:(Time_ns.Span.of_int_sec leader_edge_s)
+             sim
+             ~coins)
+       in
+       Option.iter market_sim ~f:(Server.run_market_sim ?foresight server);
        if leaders > 0
        then (
          let leaders =
            Leaders.create
+             ?foresight
              { Leaders.Config.default with
                seed = Option.value leaders_seed ~default:seed
              ; count = leaders
