@@ -35,8 +35,8 @@ val config
   -> Exchange.Config.t
 
 (** Hyperliquid's self-trade prevention: [Expire_maker]. A taker that reaches its own
-    resting order cancels that order (reported as [selfTradeCanceled]) and keeps
-    matching behind it. *)
+    resting order cancels that order (reported as [selfTradeCanceled]) and keeps matching
+    behind it. *)
 val self_trade : Order_book.Stp.t
 
 (** An exchange with {!config} and {!self_trade}. *)

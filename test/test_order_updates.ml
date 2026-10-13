@@ -118,7 +118,8 @@ let%expect_test "a bid through the user's own ask expires the ask" =
   in
   place ~is_buy:false ~px:"100000" ~tif:Gtc;
   let%bind () = Ws_helpers.receive incoming in
-  [%expect {|
+  [%expect
+    {|
     {"channel":"subscriptionResponse","data":{"method":"subscribe","subscription":{"type":"orderUpdates","user":"0x00000000000000000000000000000000000000aa"}}}
     {"status":"ok","response":{"type":"order","data":{"statuses":[{"resting":{"oid":1}}]}}}
     {"channel":"orderUpdates","data":[{"order":{"coin":"BTC","side":"A","limitPx":"100000","sz":"0.01","oid":1,"timestamp":1700000000000,"origSz":"0.01"},"status":"open","statusTimestamp":1700000000000}]}
@@ -126,7 +127,8 @@ let%expect_test "a bid through the user's own ask expires the ask" =
   (* Hyperliquid cancels the resting order and lets the new one rest; no error. *)
   place ~is_buy:true ~px:"100000" ~tif:Gtc;
   let%bind () = Ws_helpers.receive incoming in
-  [%expect {|
+  [%expect
+    {|
     {"status":"ok","response":{"type":"order","data":{"statuses":[{"resting":{"oid":2}}]}}}
     {"channel":"orderUpdates","data":[{"order":{"coin":"BTC","side":"A","limitPx":"100000","sz":"0.01","oid":1,"timestamp":1700000000000,"origSz":"0.01"},"status":"selfTradeCanceled","statusTimestamp":1700000000000},{"order":{"coin":"BTC","side":"B","limitPx":"100000","sz":"0.01","oid":2,"timestamp":1700000000000,"origSz":"0.01"},"status":"open","statusTimestamp":1700000000000}]}
     |}];

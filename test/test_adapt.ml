@@ -217,7 +217,8 @@ let%expect_test "self-trade expires the resting order, IOC and market orders" =
     (Resting (oid 3) (cloid ()))
     |}];
   place ex 3 ~tif:Ioc Buy "100100" "0.05";
-  [%expect {|
+  [%expect
+    {|
     (Error
      "Order could not immediately match against any resting orders. asset=0")
     |}];
