@@ -557,6 +557,17 @@ let order_status t json =
 
 let leaderboard t = Rankings.to_json (Rankings.rows t.rankings t.exchange)
 
+(* An approved agent is an [agent] of its account, any address the server has credited is
+   a [user], anything else is [missing]. Vaults and sub-accounts are not modelled. *)
+let user_role t address =
+  let role : User_role.Role.t =
+    match Agents.owner ~now_ms:(Exchange.now t.exchange / 1_000_000) t.agents address with
+    | Some user -> Agent { user }
+    | None -> if Hash_set.mem t.seen address then User else Missing
+  in
+  User_role.yojson_of_response role
+;;
+
 (* Info requests hl-protocol's [Info_request] does not model; [None] for the others. *)
 let handle_extra_info t json =
   let user () = Address.t_of_yojson (Json.member_exn json ~key:"user") in
@@ -567,6 +578,7 @@ let handle_extra_info t json =
   | Some (`String "extraAgents") ->
     Some (`List (List.map (Agents.agents t.agents (user ())) ~f:Agents.Agent.to_json))
   | Some (`String "leaderboard") -> Some (leaderboard t)
+  | Some (`String "userRole") -> Some (user_role t (User_role.t_of_yojson json).user)
   | Some (`String "orderStatus") -> Some (order_status t json)
   | Some (`String "userFillsByTime") ->
     let req = User_fills_by_time.t_of_yojson json in

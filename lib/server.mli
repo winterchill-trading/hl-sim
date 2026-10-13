@@ -6,7 +6,8 @@
       {!Hl_protocol.Info_response.t} JSON ([null] for an unknown coin). [nSigFigs] and
       [mantissa] are ignored. Also [maxBuilderFee] (the approved cap in tenths of a bp),
       [extraAgents] (the account's agents), [userFillsByTime] (oldest first, at most 2000)
-      and [leaderboard] ({!Rankings}).
+      [leaderboard] ({!Rankings}) and [userRole] ([agent] for an approved agent, [user]
+      for an address the server has credited, else [missing]).
     - [GET /leaderboard] (also [/Mainnet/leaderboard] and [/Testnet/leaderboard], the
       stats host's paths): the same leaderboard.
     - [POST /exchange]: an {!Hl_protocol.Exchange_request.t}, an {!Extra_action.t}
