@@ -709,6 +709,8 @@ let handle_extra_info t json =
   | Some (`String "extraAgents") ->
     Some (`List (List.map (Agents.agents t.agents (user ())) ~f:Agents.Agent.to_json))
   | Some (`String "leaderboard") -> Some (leaderboard t)
+  | Some (`String "portfolio") ->
+    Some (Rankings.portfolio t.rankings t.exchange (user ()))
   | Some (`String "metaAndAssetCtxs") -> Some (meta_and_asset_ctxs t)
   | Some (`String "userRole") -> Some (user_role t (User_role.t_of_yojson json).user)
   | Some (`String "orderStatus") -> Some (order_status t json)
