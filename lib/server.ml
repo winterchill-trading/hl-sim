@@ -78,6 +78,8 @@ type t =
   ; day_stats : Active_asset_ctx.Day_stats.t
   ; mutable on_clock_step : (now:int -> unit) list
   ; mutable status : (string * (unit -> Yojson.Safe.t)) list
+  ; guard_events : Exchange_core_engine.Guard_event.t Queue.t
+  (** the latest guard events, oldest first, at most [max_guard_events] *)
   ; agents : Agents.t
   ; builder_orders : Builder.t Order_key.Table.t
   (** resting or just-filled orders placed with a builder code *)
@@ -143,12 +145,18 @@ let step_clock t =
 let on_clock_step t f = t.on_clock_step <- t.on_clock_step @ [ f ]
 let add_status t ~name f = t.status <- t.status @ [ name, f ]
 
+let guard_events t = Queue.to_list t.guard_events
+
 let status t : Yojson.Safe.t =
   `Assoc
     ([ "ws_connections", `Int (Hashtbl.length t.conns)
      ; "ws_dropped", `Int t.num_ws_dropped
      ; "ws_idle_closed", `Int t.num_ws_idle_closed
      ]
+     (* Only with a collar or halt rule set, so that the status of other runs is as before. *)
+     @ (if Guard.is_on t.exchange
+        then [ "guard", Guard.status t.exchange ~recent:(guard_events t) ]
+        else [])
      @ List.map t.status ~f:(fun (name, f) -> name, f ()))
 ;;
 
@@ -169,6 +177,7 @@ let create ?(config = Config.default) ?(now = wall_clock) ?journal exchange =
     ; day_stats = Active_asset_ctx.Day_stats.create ()
     ; on_clock_step = []
     ; status = []
+    ; guard_events = Queue.create ()
     ; agents = Agents.create ()
     ; builder_orders = Order_key.Table.create ()
     ; rankings = Rankings.create ()
@@ -462,8 +471,20 @@ let remember_order t user (update : Order_update.t) =
       ~data:update.order.oid)
 ;;
 
+(* Enough to see what happened lately on [GET /status]; the log has every event. *)
+let max_guard_events = 50
+
+let drain_guard_events t =
+  List.iter (Exchange.drain_guard_events t.exchange) ~f:(fun e ->
+    Log.Global.info_s [%sexp "guard", (e : Exchange_core_engine.Guard_event.t)];
+    Queue.enqueue t.guard_events e;
+    if Queue.length t.guard_events > max_guard_events
+    then ignore (Queue.dequeue_exn t.guard_events : Exchange_core_engine.Guard_event.t))
+;;
+
 let publish t =
   publish_liquidations t;
+  drain_guard_events t;
   let numbered = Exchange.drain_numbered_events t.exchange in
   let events = List.map numbered ~f:(fun (e : Event.Numbered.t) -> e.event) in
   if not (Hashtbl.is_empty t.builder_orders) then charge_builder_fees t events;
@@ -569,6 +590,11 @@ let mutate t ~f =
 ;;
 
 let publish_events t = publish t
+
+let reopen ?coin t =
+  mutate t ~f:(fun ex -> Exchange.reopen ?symbol:coin ex);
+  Guard.status t.exchange ~recent:(guard_events t)
+;;
 
 (* Request handlers *)
 
@@ -1289,6 +1315,11 @@ let handler t ~body _addr req =
     in
     response
   | `GET, "/status" -> respond_json (status t)
+  | `POST, "/sim/reopen" ->
+    let coin =
+      Uri.get_query_param (Cohttp.Request.uri req) "coin" |> Option.map ~f:Coin.of_string
+    in
+    respond_json (reopen ?coin t)
   | `GET, ("/ws" | "/") when header_is req "upgrade" "websocket" -> ws_upgrade t req
   | _, path -> respond_error `Not_found (sprintf "no route for %s" path)
 ;;

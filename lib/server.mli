@@ -22,6 +22,7 @@
       connection may follow at most [Config.max_ws_users] distinct users across them (the
       next subscription gets an [error] message).
     - [GET /status]: {!status}.
+    - [POST /sim/reopen] (optional query [coin]): {!reopen}, a simulator-only admin call.
 
     Malformed requests get status 400 and [{"error": "..."}].
 
@@ -129,9 +130,21 @@ val on_clock_step : t -> (now:int -> unit) -> unit
 (** [add_status t ~name f] adds [name: f ()] to {!status}. *)
 val add_status : t -> name:string -> (unit -> Yojson.Safe.t) -> unit
 
-(** [{"ws_connections": n, "ws_dropped": n, "ws_idle_closed": n, ...}] and the entries of
-    {!add_status}, in the order they were added; served on [GET /status]. *)
+(** [{"ws_connections": n, "ws_dropped": n, "ws_idle_closed": n, ...}], then, when a price
+    collar or halt rule is set, ["guard"] ({!Guard.status}: settings, halted coins, counters,
+    recent guard events), and the entries of {!add_status}, in the order they were added;
+    served on [GET /status]. *)
 val status : t -> Yojson.Safe.t
+
+(** The latest guard events (collar rejections and re-pricings, halt rejections, halts,
+    reopenings), oldest first, at most 50. The server drains the engine's guard log after
+    every mutation and logs each event. *)
+val guard_events : t -> Exchange_core_engine.Guard_event.t list
+
+(** Lifts the halt of [coin] (default: every halted coin) through {!mutate} and returns the
+    {!Guard.status}; served on [POST /sim/reopen?coin=BTC]. The hook for halt levels that
+    wait for a reopening. *)
+val reopen : ?coin:Coin.t -> t -> Yojson.Safe.t
 
 (** Logs and publishes the events the exchange produced outside {!mutate} (for example by
     a price anchor acting on it directly). *)
