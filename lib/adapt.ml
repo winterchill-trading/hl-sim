@@ -418,7 +418,8 @@ let place_order_with_update ex address (req : Order_request.t) =
     in
     let status =
       if collared
-      then Order_status.Error (collar_message (meta ex) ex neutral.symbol ~side:neutral.side)
+      then
+        Order_status.Error (collar_message (meta ex) ex neutral.symbol ~side:neutral.side)
       else order_status (meta ex) ~coin:(Some neutral.symbol) status
     in
     status, update
@@ -473,7 +474,8 @@ let modify ex address (req : Modify_request.t) =
         Exchange.modify ?trigger ex address target neutral)
     in
     if collared
-    then Order_status.Error (collar_message (meta ex) ex neutral.symbol ~side:neutral.side)
+    then
+      Order_status.Error (collar_message (meta ex) ex neutral.symbol ~side:neutral.side)
     else order_status (meta ex) ~coin:(Some neutral.symbol) status
 ;;
 

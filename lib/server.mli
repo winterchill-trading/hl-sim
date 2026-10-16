@@ -131,9 +131,9 @@ val on_clock_step : t -> (now:int -> unit) -> unit
 val add_status : t -> name:string -> (unit -> Yojson.Safe.t) -> unit
 
 (** [{"ws_connections": n, "ws_dropped": n, "ws_idle_closed": n, ...}], then, when a price
-    collar or halt rule is set, ["guard"] ({!Guard.status}: settings, halted coins, counters,
-    recent guard events), and the entries of {!add_status}, in the order they were added;
-    served on [GET /status]. *)
+    collar or halt rule is set, ["guard"] ({!Guard.status}: settings, halted coins,
+    counters, recent guard events), and the entries of {!add_status}, in the order they
+    were added; served on [GET /status]. *)
 val status : t -> Yojson.Safe.t
 
 (** The latest guard events (collar rejections and re-pricings, halt rejections, halts,
@@ -141,9 +141,9 @@ val status : t -> Yojson.Safe.t
     every mutation and logs each event. *)
 val guard_events : t -> Exchange_core_engine.Guard_event.t list
 
-(** Lifts the halt of [coin] (default: every halted coin) through {!mutate} and returns the
-    {!Guard.status}; served on [POST /sim/reopen?coin=BTC]. The hook for halt levels that
-    wait for a reopening. *)
+(** Lifts the halt of [coin] (default: every halted coin) through {!mutate} and returns
+    the {!Guard.status}; served on [POST /sim/reopen?coin=BTC]. The hook for halt levels
+    that wait for a reopening. *)
 val reopen : ?coin:Coin.t -> t -> Yojson.Safe.t
 
 (** Logs and publishes the events the exchange produced outside {!mutate} (for example by

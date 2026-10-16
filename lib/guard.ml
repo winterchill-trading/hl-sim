@@ -36,23 +36,28 @@ let parse_levels s =
 ;;
 
 let reference_arg =
-  Command.Arg_type.of_alist_exn ~list_values_in_help:false
+  Command.Arg_type.of_alist_exn
+    ~list_values_in_help:false
     [ "last", Price_collar.Reference.Last_trade; "mid", Mid; "mark", Mark ]
 ;;
 
 let action_arg =
-  Command.Arg_type.of_alist_exn ~list_values_in_help:false [ "reject", Price_collar.Action.Reject; "reprice", Reprice ]
+  Command.Arg_type.of_alist_exn
+    ~list_values_in_help:false
+    [ "reject", Price_collar.Action.Reject; "reprice", Reprice ]
 ;;
 
 let scope_arg =
-  Command.Arg_type.of_alist_exn ~list_values_in_help:false
+  Command.Arg_type.of_alist_exn
+    ~list_values_in_help:false
     [ "market", Halt_rule.Scope.Market_wide; "symbol", Per_symbol ]
 ;;
 
 let collar_config ~bps ~ticks ~reference ~action ~anchored =
   let band : Price_collar.Band.t option Or_error.t =
     match bps, ticks with
-    | Some _, Some _ -> Or_error.error_string "-collar-bps and -collar-ticks exclude each other"
+    | Some _, Some _ ->
+      Or_error.error_string "-collar-bps and -collar-ticks exclude each other"
     | Some n, None -> Ok (Some (Bps n))
     | None, Some n -> Ok (Some (Ticks n))
     | None, None -> Ok None
@@ -60,13 +65,17 @@ let collar_config ~bps ~ticks ~reference ~action ~anchored =
   match%bind.Or_error band with
   | None ->
     if Option.is_some reference || Option.is_some action
-    then Or_error.error_string "-collar-reference and -collar-action need -collar-bps or -collar-ticks"
+    then
+      Or_error.error_string
+        "-collar-reference and -collar-action need -collar-bps or -collar-ticks"
     else Ok None
   | Some band ->
     let config =
       { Price_collar.Config.band
       ; reference =
-          Option.value reference ~default:(if anchored then Price_collar.Reference.Mark else Last_trade)
+          Option.value
+            reference
+            ~default:(if anchored then Price_collar.Reference.Mark else Last_trade)
       ; action = Option.value action ~default:Price_collar.Action.Reject
       }
     in
@@ -94,6 +103,12 @@ let halt_config ~levels ~scope =
     Some config
 ;;
 
+let of_flags ?bps ?ticks ?reference ?action ?levels ?scope ~anchored () =
+  let%bind.Or_error collar = collar_config ~bps ~ticks ~reference ~action ~anchored in
+  let%map.Or_error halt_rule = halt_config ~levels ~scope in
+  { Config.collar; halt_rule }
+;;
+
 let param =
   let open Command.Let_syntax in
   let%map_open bps =
@@ -102,12 +117,16 @@ let param =
       (optional int)
       ~doc:"N price collar: reject orders priced more than N bps from the reference"
   and ticks =
-    flag "-collar-ticks" (optional int) ~doc:"N price collar of N ticks around the reference"
+    flag
+      "-collar-ticks"
+      (optional int)
+      ~doc:"N price collar of N ticks around the reference"
   and reference =
     flag
       "-collar-reference"
       (optional reference_arg)
-      ~doc:"REF collar reference: last, mid or mark (default mark when anchored, else last)"
+      ~doc:
+        "REF collar reference: last, mid or mark (default mark when anchored, else last)"
   and action =
     flag
       "-collar-action"
@@ -126,10 +145,7 @@ let param =
       (optional scope_arg)
       ~doc:"SCOPE market (default: a halt stops every coin) or symbol"
   in
-  fun ~anchored ->
-    let%bind.Or_error collar = collar_config ~bps ~ticks ~reference ~action ~anchored in
-    let%map.Or_error halt_rule = halt_config ~levels ~scope in
-    { Config.collar; halt_rule }
+  fun ~anchored -> of_flags ?bps ?ticks ?reference ?action ?levels ?scope ~anchored ()
 ;;
 
 let apply (config : Config.t) ex =
@@ -152,7 +168,10 @@ let collar_of_exchange ex =
     Exchange.collar ex i.symbol)
 ;;
 
-let is_on ex = Option.is_some (Exchange.halt_rule ex) || Option.is_some (collar_of_exchange ex)
+let is_on ex =
+  Option.is_some (Exchange.halt_rule ex) || Option.is_some (collar_of_exchange ex)
+;;
+
 let px p = `String (Price.to_string p)
 
 let side_json : Exchange_core.Side.t -> Yojson.Safe.t = function
@@ -274,7 +293,8 @@ let status ex ~recent : Yojson.Safe.t =
   in
   `Assoc
     [ "collar", Option.value_map (collar_of_exchange ex) ~default:`Null ~f:collar_json
-    ; "halt_rule", Option.value_map (Exchange.halt_rule ex) ~default:`Null ~f:halt_rule_json
+    ; ( "halt_rule"
+      , Option.value_map (Exchange.halt_rule ex) ~default:`Null ~f:halt_rule_json )
     ; "halted", `List halted
     ; "stats", stats_json (Exchange.guard_stats ex)
     ; "recent", `List (List.map recent ~f:event_json)
@@ -298,8 +318,7 @@ let collar_percent ex coin ~side =
      | Some instrument, Some reference ->
        let bound = Price_collar.bound config instrument ~reference ~side in
        let reference = Price.to_float reference in
-       percent_string
-         (Float.abs (Price.to_float bound -. reference) /. reference *. 100.)
+       percent_string (Float.abs (Price.to_float bound -. reference) /. reference *. 100.)
      | _ -> "?")
 ;;
 

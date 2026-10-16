@@ -144,7 +144,6 @@ let step_clock t =
 
 let on_clock_step t f = t.on_clock_step <- t.on_clock_step @ [ f ]
 let add_status t ~name f = t.status <- t.status @ [ name, f ]
-
 let guard_events t = Queue.to_list t.guard_events
 
 let status t : Yojson.Safe.t =
@@ -153,7 +152,8 @@ let status t : Yojson.Safe.t =
      ; "ws_dropped", `Int t.num_ws_dropped
      ; "ws_idle_closed", `Int t.num_ws_idle_closed
      ]
-     (* Only with a collar or halt rule set, so that the status of other runs is as before. *)
+     (* Only with a collar or halt rule set, so that the status of other runs is as
+        before. *)
      @ (if Guard.is_on t.exchange
         then [ "guard", Guard.status t.exchange ~recent:(guard_events t) ]
         else [])

@@ -84,8 +84,9 @@ val place_order : Exchange.t -> Address.t -> Order_request.t -> Order_status.t
     ["minTradeNtlRejected"], ["perpMarginRejected"], ["reduceOnlyRejected"],
     ["tickRejected"], ... ({!reject_status}). Front-end rejections (unknown asset) have no
     order id and get none. An order beyond the price collar ({!Guard}) is answered with
-    Hyperliquid's oracle error, ["Order price cannot be more than P% away from the
-    reference price asset=N"], and status ["oracleRejected"]. *)
+    Hyperliquid's oracle error,
+    ["Order price cannot be more than P% away from the reference price asset=N"], and
+    status ["oracleRejected"]. *)
 val place_order_with_update
   :  Exchange.t
   -> Address.t

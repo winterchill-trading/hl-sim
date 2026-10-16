@@ -37,6 +37,18 @@ val parse_levels : string -> Halt_rule.Level.t list Or_error.t
     action without a band, a scope without levels, or invalid settings. *)
 val param : (anchored:bool -> Config.t Or_error.t) Command.Param.t
 
+(** What {!param} does with the parsed flags. *)
+val of_flags
+  :  ?bps:int
+  -> ?ticks:int
+  -> ?reference:Price_collar.Reference.t
+  -> ?action:Price_collar.Action.t
+  -> ?levels:string
+  -> ?scope:Halt_rule.Scope.t
+  -> anchored:bool
+  -> unit
+  -> Config.t Or_error.t
+
 (** Sets the collar on every instrument of the exchange and the halt rule (only those
     configured). *)
 val apply : Config.t -> Exchange.t -> unit Or_error.t
