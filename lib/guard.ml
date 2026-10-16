@@ -36,16 +36,16 @@ let parse_levels s =
 ;;
 
 let reference_arg =
-  Command.Arg_type.of_alist_exn
+  Command.Arg_type.of_alist_exn ~list_values_in_help:false
     [ "last", Price_collar.Reference.Last_trade; "mid", Mid; "mark", Mark ]
 ;;
 
 let action_arg =
-  Command.Arg_type.of_alist_exn [ "reject", Price_collar.Action.Reject; "reprice", Reprice ]
+  Command.Arg_type.of_alist_exn ~list_values_in_help:false [ "reject", Price_collar.Action.Reject; "reprice", Reprice ]
 ;;
 
 let scope_arg =
-  Command.Arg_type.of_alist_exn
+  Command.Arg_type.of_alist_exn ~list_values_in_help:false
     [ "market", Halt_rule.Scope.Market_wide; "symbol", Per_symbol ]
 ;;
 
