@@ -43,6 +43,11 @@ dune exec hl-sim -- -port 3000
 | `-anchor-noise` | 0 | noise traders kept on anchored coins |
 | `-anchor-price-factor`, `-anchor-size-factor` | 1 | scale reference prices and sizes |
 | `-anchor-status-interval-s` | 10 | log each anchor's status this often (0: never) |
+| `-collar-bps`, `-collar-ticks` | off | price collar on every coin: an aggressive order priced more than N bps (or N ticks) from the reference is rejected (see [Price collar and halts](#price-collar-and-halts)) |
+| `-collar-reference` | `last` (`mark` with `-anchor`) | the collar's reference: `last` trade, book `mid` or `mark` |
+| `-collar-action` | `reject` | `reject` an order beyond the collar, or `reprice` it to the band |
+| `-halt-levels` | off | halt levels, `PERCENT:DURATION,...` such as `7:15m,13:15m,20:reopen` |
+| `-halt-scope` | `market` | a halt stops every coin (`market`) or only the coin that moved (`symbol`) |
 | `-l2-interval-ms` | 500 | minimum time between two `l2Book` pushes |
 | `-taker-fee-bps`, `-maker-fee-bps` | 4.5, 1.5 | trading fees (Hyperliquid's base perps tier) |
 | `-leaders` | 0 | leader accounts for copy trading (see [Copy trading](#copy-trading)) |
@@ -198,6 +203,48 @@ Notes:
   `markPrice`) over the book mid, so between funding updates the mark can lag the book.
 - Reference levels are rounded to the coin's tick (bids down, asks up), so several
   Binance ETHUSDT levels (0.01 tick) can share one simulated ETH level (0.1 tick).
+
+### Price collar and halts
+
+The engine's price collar and halt rule (exchange-core's `Price_collar` and `Halt_rule`)
+are off by default. With the flags, they are set through the engine's recorded calls, so
+an `-input-journal` carries them and its replay reproduces every guard event.
+
+```sh
+# 50 bps collar on the last trade; halts at 7% and 13% for 15 minutes, 20% until reopened
+dune exec hl-sim -- -collar-bps 50 -halt-levels 7:15m,13:15m,20:reopen
+# Anchored: the collar's reference is the anchored mark unless -collar-reference says otherwise
+dune exec hl-sim -- -anchor hyperliquid:BTC -collar-ticks 200 -collar-action reprice
+```
+
+- **Collar.** A buy may not trade above the reference plus the band, a sell not below the
+  reference minus it. A marketable limit order beyond the band is rejected
+  (`-collar-action reject`) or re-priced to the band (`reprice`); a market order's
+  protection price is clamped. Post-only and liquidation orders are not checked. Without
+  a reference price yet (no trade, no mark) the order passes and `collar_unreferenced`
+  counts it.
+- **Halts.** Each coin's mark is compared with its session reference (the first price seen).
+  A move past an untriggered level halts every coin (`-halt-scope market`) or that coin
+  (`symbol`) for the level's duration; `reopen` halts until `POST /sim/reopen`. While
+  halted, orders that would trade are rejected; passive orders rest and cancels work.
+- **Errors**, as Hyperliquid reports a bad price:
+
+| Engine outcome | `/exchange` status | `orderUpdates` status |
+| --- | --- | --- |
+| collar rejection | `{"error": "Order price cannot be more than 0.5% away from the reference price asset=0"}` (the collar's width; for a band in ticks, measured at the current reference) | `oracleRejected` |
+| halt rejection | `{"error": "Trading is halted. asset=0"}` (simulator text: Hyperliquid does not halt) | `rejected` |
+
+  Hyperliquid's own oracle error has the same wording with its fixed 80%. A price off the
+  tick or significant-figure grid still gets `Price must be divisible by tick size.`
+- **Status and admin.** With a collar or halt rule set, `GET /status` has a `guard` entry:
+  the settings, the halted coins (`until_ms`, or `until` `"reopen"`), the counters
+  (`collar_rejected`, `collar_repriced`, `collar_unreferenced`, `halt_rejected`, `halts`,
+  `reopens`) and the last 50 guard events. Every guard event is also logged at `info`.
+  `POST /sim/reopen` (optional `?coin=BTC`) lifts halts and answers the same JSON.
+
+`scripts/collar-e2e.sh [SECONDS]` runs the simulator with a 50 bps collar and the halt
+levels above, the market-maker binary against it, then an IOC buy 5% through the mid
+that must get the oracle error, and prints the guard status.
 
 ### Websocket
 
@@ -405,6 +452,7 @@ are in the [exchange-core README](https://github.com/winterchill-trading/exchang
 | `Rankings` | leaderboard rows from sampled account values, deposits and volume |
 | `Leaders` | leader accounts with trend, mean-reversion and random strategies |
 | `Foresight` | the leaders' edge: the market's reference walk drawn ahead of the market |
+| `Guard` | the price collar and halt rule flags, applying them to the engine, the `guard` status JSON, telling collar rejections from tick errors |
 | `Anchoring` | price anchors: `-anchor` specs, the reference sources (live feed of the linked clients, raw files, event logs), the anchor wired to the server's clock and websocket, its status |
 | `Server` | cohttp-async server for `/info`, `/exchange` and the `/ws` websocket (async_websocket); owns the engine and drives its market simulation |
 
@@ -495,3 +543,6 @@ the engine journal.
 Anchor tests: a simulator anchored live to another one serving as the reference, and an
 anchored run over the recorded minute in `test/fixtures` (copied from hl-client) whose
 engine journal replays to the same book, marks and client fills.
+Guard tests: the collar and halt flags, the oracle and halt errors, re-pricing, the
+`guard` status, reopening, and input journals (plain and anchored with a collar on the
+mark) that replay to the same guard events and counters.
