@@ -13,12 +13,13 @@ Workspace-wide rules, the repository map and the CI model are in
 
 | Path | Holds |
 | --- | --- |
-| `lib/` | The `hl_sim` library: the Hyperliquid view of the engine (`Adapt`), `Active_asset_ctx`, the HTTP and websocket server, copy-trading support, anchoring ([lib/AGENTS.md](lib/AGENTS.md)) |
-| `bin/` | The `hl-sim` executable: flags for seed, market, noise traders, journals, price anchor, copy trading ([bin/AGENTS.md](bin/AGENTS.md)) |
+| `lib/` | The `hl_sim` library: the Hyperliquid view of the engine (`Adapt`), `Active_asset_ctx`, the HTTP and websocket server, copy-trading support, anchoring, the price collar and halt settings (`Guard`) ([lib/AGENTS.md](lib/AGENTS.md)) |
+| `bin/` | The `hl-sim` executable: flags for seed, market, noise traders, journals, price anchor, copy trading, collar and halts ([bin/AGENTS.md](bin/AGENTS.md)) |
 | `test/` | Expect tests, the signed-request fixtures and recorded raw frames ([test/AGENTS.md](test/AGENTS.md)) |
-| `scripts/` | `anchor-demo.sh`, a live anchor run against a recorded minute |
+| `scripts/` | `anchor-demo.sh`, a live anchor run against a recorded minute; `collar-e2e.sh`, the market-maker binary against a collared simulator |
 | `.github/` | CI workflow ([.github/AGENTS.md](.github/AGENTS.md)) |
-| `README.md` | Running, addresses, the info and exchange endpoints, journal, price anchor, copy trading |
+| `README.md` | Running, addresses, the info and exchange endpoints, journal, price anchor, price collar and halts (error mapping), copy trading |
+| `CHANGES.md` | Changelog |
 
 ## Build and test
 
@@ -89,6 +90,14 @@ Check a run with one `gh run list --limit 1` and at most one
   their slippage or give them an edge, or the copy-trading runs show nothing.
 - Pushing commits in quick succession cancels earlier CI runs through the concurrency
   group. Pause until one run finishes before the next push when you need its result.
+- The engine reports a collar rejection as `Invalid_price`, like a tick error. `Adapt` tells
+  them apart by `guard_stats.collar_rejected` going up during the call; never drain the
+  guard log for that, the server owns the drain (`Server.guard_events`).
+- The server drains guard events after every mutation. A test comparing them with a
+  replay reads `Server.guard_events` (after `publish_events`), not
+  `Exchange.drain_guard_events` on the live exchange, which is empty by then.
+- Guard settings must be applied after the input journal is attached, or the journal
+  replays without them.
 - Expect tests of the signed fixtures are generated with the Python `eth-account` package
   in a scratch virtualenv; do not install it into the shared switch.
 
