@@ -219,6 +219,7 @@ let command =
          no_arg
          ~doc:
            " with -strict-signatures, check the mainnet signing domain (default testnet)"
+     and guard = Guard.param
      and log_level =
        flag
          "-log-level"
@@ -245,6 +246,11 @@ let command =
          Shutdown.at_shutdown (fun () ->
            Exchange_core_engine.Journal.close journal;
            return ()));
+       (* After the input journal is attached, so that it records the settings. *)
+       let guard = guard ~anchored:(not (List.is_empty anchors)) |> ok_exn in
+       Guard.apply guard exchange |> ok_exn;
+       if Guard.is_on exchange
+       then Log.Global.info_s [%message "guard" ~_:(guard : Guard.Config.t)];
        let%bind journal =
          match journal with
          | None -> return None
