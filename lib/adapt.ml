@@ -125,6 +125,9 @@ let reject_message meta ?coin (reason : Neutral.Reject_reason.t) =
   match reason with
   | Unknown_symbol ->
     sprintf "Unknown coin %s." (Option.value_map coin ~default:"?" ~f:Coin.to_string)
+  (* Hyperliquid has no trading halts; the simulator's own text for the engine's halt
+     rejection. *)
+  | Unsupported "trading halted" -> "Trading is halted." ^ suffix
   | Unsupported msg -> msg
   | Invalid_size -> "Order has invalid size." ^ suffix
   (* Hyperliquid's documented text for its [Tick] error; the engine's [Invalid_price] also
@@ -148,6 +151,19 @@ let reject_message meta ?coin (reason : Neutral.Reject_reason.t) =
       (show best_ask)
       suffix
   | Order_not_found -> "Cannot modify canceled or filled order"
+;;
+
+(* Hyperliquid's oracle error ("oracleRejected" in order updates), which it gives for an
+   order priced more than 80% from the reference; here with the collar's own width. *)
+let collar_message meta ex coin ~side =
+  let suffix =
+    Meta.asset_of_coin meta coin
+    |> Option.value_map ~default:"" ~f:(fun a -> sprintf " asset=%d" (Asset.to_int a))
+  in
+  sprintf
+    "Order price cannot be more than %s%% away from the reference price%s"
+    (Guard.collar_percent ex coin ~side)
+    suffix
 ;;
 
 let order_status meta ~coin (status : Neutral.Order_status.t) : Order_status.t =
@@ -374,10 +390,11 @@ let place_order_with_update ex address (req : Order_request.t) =
   match neutral_request ex req with
   | Error rejection -> reject_request ex address req rejection, None
   | Ok (neutral, trigger) ->
-    let oid, status =
-      match trigger with
-      | None -> Exchange.place_with_order_id ex address neutral
-      | Some trigger -> Exchange.place_trigger ex address neutral trigger
+    let (oid, status), collared =
+      Guard.collar_rejected_during ex ~f:(fun () ->
+        match trigger with
+        | None -> Exchange.place_with_order_id ex address neutral
+        | Some trigger -> Exchange.place_trigger ex address neutral trigger)
     in
     let update =
       match status with
@@ -394,12 +411,17 @@ let place_order_with_update ex address (req : Order_request.t) =
               ; orig_sz = Some req.sz
               ; cloid = req.cloid
               }
-          ; status = reject_status reason
+          ; status = (if collared then Other "oracleRejected" else reject_status reason)
           ; status_timestamp = time
           }
       | Resting _ | Filled _ -> None
     in
-    order_status (meta ex) ~coin:(Some neutral.symbol) status, update
+    let status =
+      if collared
+      then Order_status.Error (collar_message (meta ex) ex neutral.symbol ~side:neutral.side)
+      else order_status (meta ex) ~coin:(Some neutral.symbol) status
+    in
+    status, update
 ;;
 
 let place_order ex address req = fst (place_order_with_update ex address req)
@@ -446,8 +468,13 @@ let modify ex address (req : Modify_request.t) =
       | Oid oid -> Order_id oid
       | Cloid cloid -> Client_order_id cloid
     in
-    Exchange.modify ?trigger ex address target neutral
-    |> order_status (meta ex) ~coin:(Some neutral.symbol)
+    let status, collared =
+      Guard.collar_rejected_during ex ~f:(fun () ->
+        Exchange.modify ?trigger ex address target neutral)
+    in
+    if collared
+    then Order_status.Error (collar_message (meta ex) ex neutral.symbol ~side:neutral.side)
+    else order_status (meta ex) ~coin:(Some neutral.symbol) status
 ;;
 
 (* Info endpoint *)

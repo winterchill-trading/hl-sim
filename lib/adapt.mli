@@ -83,7 +83,9 @@ val place_order : Exchange.t -> Address.t -> Order_request.t -> Order_status.t
     matching engine rejects: status ["badAloPxRejected"], ["iocCancelRejected"],
     ["minTradeNtlRejected"], ["perpMarginRejected"], ["reduceOnlyRejected"],
     ["tickRejected"], ... ({!reject_status}). Front-end rejections (unknown asset) have no
-    order id and get none. *)
+    order id and get none. An order beyond the price collar ({!Guard}) is answered with
+    Hyperliquid's oracle error, ["Order price cannot be more than P% away from the
+    reference price asset=N"], and status ["oracleRejected"]. *)
 val place_order_with_update
   :  Exchange.t
   -> Address.t
@@ -130,7 +132,8 @@ val clearinghouse_state : Exchange.t -> Address.t -> Clearinghouse_state.t
 (** {2 Conversions} *)
 
 (** Hyperliquid's wording for a rejection, with the [" asset=N"] suffix where Hyperliquid
-    adds one ([coin]'s index in [meta]). *)
+    adds one ([coin]'s index in [meta]). The engine's halt rejection is
+    ["Trading is halted. asset=N"], the simulator's own text (Hyperliquid does not halt). *)
 val reject_message : Meta.t -> ?coin:Coin.t -> Exchange_core.Reject_reason.t -> string
 
 val order_status
