@@ -41,7 +41,7 @@ let range_end = Time_ns.add start (Time_ns.Span.of_min 1.)
 
 (* A fresh simulator with the client's three orders, BTC anchored to [source], run to the
    end of the source. Returns the exchange, its inputs and the anchoring. *)
-let run_anchored source =
+let run_anchored ?(guard = Guard.Config.off) ?(on_server = ignore) source =
   Log.Global.set_output [];
   let exchange = Adapt.create_exchange () in
   let inputs = Queue.create () in
@@ -49,6 +49,8 @@ let run_anchored source =
   let server =
     Server.create ~now:(fun () -> Time_ns.to_int_ns_since_epoch start) exchange
   in
+  Guard.apply guard exchange |> ok_exn;
+  on_server server;
   List.iter
     [ order ~is_buy:true ~px:"82514" ~sz:"0.01"
     ; order ~is_buy:true ~px:"82490" ~sz:"0.02"
@@ -128,6 +130,53 @@ let%expect_test "an anchored run replays from its journal" =
     [%message "" ~replay_matches:(Sexp.equal (state exchange) (state replayed) : bool)];
   [%expect {| (replay_matches true) |}];
   return ()
+;;
+
+let%expect_test "an anchored run with a collar on the mark replays its guard events" =
+  (* A 5 bps collar on the anchored mark (the default reference of an anchored run) and a
+     5 bps halt level: tight enough for the recorded minute to hit both. *)
+  let guard = Guard.of_flags ~bps:5 ~levels:"0.05:10s" ~anchored:true () |> ok_exn in
+  let server = Set_once.create () in
+  let%map exchange, inputs, _ =
+    run_anchored ~guard ~on_server:(fun s -> Set_once.set_exn server s) raw_source
+  in
+  (* After the run, a client buy 1% through the anchored mark. *)
+  (match (order ~is_buy:true ~px:"83300" ~sz:"0.01").action with
+   | Order { orders = [ o ]; _ } ->
+     print_s
+       [%sexp
+         (Adapt.place_order exchange client { o with order_type = Limit { tif = Ioc } }
+          : Order_status.t)]
+   | _ -> assert false);
+  (* The server drains the guard log after each mutation; the last order's event comes
+     with the next one. *)
+  Server.publish_events (Set_once.get_exn server);
+  let server_events = Server.guard_events (Set_once.get_exn server) in
+  let replayed =
+    Engine_journal.replay
+      ~config:(Exchange.config exchange)
+      (Engine_journal.of_string (Engine_journal.to_string (Queue.to_list inputs))
+       |> ok_exn)
+  in
+  print_s
+    [%message
+      ""
+        ~stats:(Exchange.guard_stats exchange : Exchange_core_engine.Guard_event.Stats.t)
+        ~same_events:
+          ([%equal: Exchange_core_engine.Guard_event.t list]
+             server_events
+             (Exchange.drain_guard_events replayed)
+           : bool)
+        ~replay_matches:(Sexp.equal (state exchange) (state replayed) : bool)];
+  [%expect
+    {|
+    (Error
+     "Order price cannot be more than 0.05% away from the reference price asset=0")
+    ((stats
+      ((collar_rejected 1) (collar_repriced 0) (collar_unreferenced 3)
+       (halt_rejected 3) (halts 3) (reopens 3)))
+     (same_events true) (replay_matches true))
+    |}]
 ;;
 
 let with_temp_dir f =
