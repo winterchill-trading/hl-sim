@@ -9,4 +9,5 @@ Build and run from the repository root:
 Rules that matter here:
 
 - A new flag keeps the default behaviour of existing runs, and gets a line in the README.
+  The collar and halt flags are off unless given and come from `Guard.param`.
 - Changing a default changes every seeded run that relies on it; say so in the commit message.
